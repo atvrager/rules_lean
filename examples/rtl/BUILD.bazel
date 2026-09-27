@@ -1,0 +1,86 @@
+load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The opcode table is generated, as a real project generates it from a machine
+# readable ISA description. The generated file is an ordinary `srcs` entry.
+genrule(
+    name = "opcodes",
+    outs = ["Isa/Opcodes.lean"],
+    cmd = """printf '%s\n' \
+      '/-- Generated decoder table: name, opcode, and whether the instruction writes rd. -/' \
+      'structure OpcodeRow where' \
+      '  name : String' \
+      '  opcode : Nat' \
+      '  hasRd : Bool' \
+      'deriving Repr' \
+      '' \
+      'def opcodes : List OpcodeRow := [' \
+      '  ⟨"addi", 0x13, true⟩,' \
+      '  ⟨"sw", 0x23, false⟩,' \
+      '  ⟨"jal", 0x6f, true⟩,' \
+      ']' > $@""",
+)
+
+lean_library(
+    name = "types",
+    srcs = ["Rtl/Types.lean"],
+)
+
+lean_library(
+    name = "netlist",
+    srcs = ["Rtl/Netlist.lean"],
+    deps = [":types"],
+)
+
+lean_library(
+    name = "opcode_table",
+    srcs = [":opcodes"],
+)
+
+# A project treats warnings as errors. The flag is part of the action key, so
+# it cannot silently change between machines.
+lean_library(
+    name = "decode",
+    srcs = ["Isa/Decode.lean"],
+    deps = [
+        ":opcode_table",
+        ":types",
+    ],
+    extra_flags = ["-DwarningAsError=true"],
+)
+
+lean_library(
+    name = "emit",
+    srcs = ["Codegen/Emit.lean"],
+    deps = [":netlist"],
+)
+
+lean_library(
+    name = "sim",
+    srcs = ["Rtl/Sim.lean"],
+    deps = [":netlist"],
+)
+
+lean_library(
+    name = "rtl",
+    srcs = ["Rtl.lean"],
+    deps = [
+        ":decode",
+        ":emit",
+        ":sim",
+        ":types",
+    ],
+)
+
+lean_test(
+    name = "rtl_test",
+    size = "small",
+    srcs = ["Test/Sim.lean"],
+    entry = "Test/Sim.lean",
+    deps = [
+        ":decode",
+        ":emit",
+        ":sim",
+    ],
+)

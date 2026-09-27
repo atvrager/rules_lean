@@ -27,12 +27,26 @@ piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
 | Tier | What it is | Where |
 | --- | --- | --- |
 | Unit | one rule, one feature, seconds | `e2e/`, one bzlmod module per case |
+| Shape | a project the size of a real one, in the repository | `examples/rtl`, the RTL demo |
 | Integration | a Lean project that grows with the ruleset | `lisp/`, the Lisp machine |
 | Field | projects outside this repository that use the ruleset | not in this repository |
 
 The Lisp machine is the long-term integration suite: a small Lisp with a
 correctness proof against Mathlib, compiled to a stack machine. Each ruleset
 feature gets a piece of it. See [docs/lisp-machine.md](docs/lisp-machine.md).
+
+`examples/rtl` is a project of realistic shape, in this repository, so the
+default build gates it. It has 10 files:
+
+| Feature of a real project | In the demo |
+| --- | --- |
+| Nested namespaces | `Rtl.*`, `Isa.*`, `Codegen.Emit` |
+| A generated source | `Isa/Opcodes.lean` from a `genrule`, compiled by `Isa.Decode` |
+| Warnings as errors | `extra_flags = ["-DwarningAsError=true"]` on one library |
+| A root module that imports everything | `Rtl.lean` |
+| A project test | `//examples/rtl:rtl_test`, 9 checks |
+
+A demo with Mathlib, executables, and a test driver lands with M1.
 
 ## Requirements from real projects
 
