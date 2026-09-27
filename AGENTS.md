@@ -1,0 +1,52 @@
+# AGENTS.md
+
+Rules for work in this repository. They apply to code, comments, docs, and
+replies.
+
+## Prose
+
+Write Simplified Technical English (ASD-STE100 style).
+
+- One idea per sentence. Short common words. Active voice.
+- State the fact, the number, the file, the command. Then stop.
+- Delete any sentence that explains why the finding is interesting. The reader
+  decides that.
+- Do not announce what you are about to say. Say it.
+- Do not narrate your own diligence or honesty. Report the correction as a fact
+  about the code.
+- No hype, no praise, no metaphor, no self-assessment.
+- No emoji in technical prose.
+
+Wrong: "**Key finding**: the toolchain ships IR files, which is why the build
+stayed broken."
+
+Right: "The toolchain ships `.ir` files (2 files, 1.2 MiB). The action did not
+declare them, so Lean reported missing executable code."
+
+## Lean and Bazel facts that shape the rules
+
+- Lean derives a module name from the file path relative to a root (`-R`), and
+  refuses a file outside that root. It resolves the file path first, so a
+  sandbox symlink moves the file out of a sandbox-relative root. Derive the root
+  at execution time from the resolved file path (`_ROOT_SNIPPET` in
+  `lean/private/lean_rules.bzl`).
+- An olean must sit at `<LEAN_PATH entry>/<module path>.olean`. `lean_library`
+  mirrors the module path under `<target>.olean/` for this reason.
+- A module name is the source path relative to the Bazel package directory. Put
+  the `BUILD.bazel` file in the Lean source root.
+- `LEAN_PATH` replaces the built-in search path. Always add the toolchain
+  standard library directory explicitly.
+- The toolchain loader opens `.olean`, `.olean.private`, `.olean.server`, and
+  `.ir`. All four must be action inputs.
+- Network access belongs in repository rules. Actions stay hermetic.
+
+## Commands
+
+    cd e2e/hello && bazel test //...     # the acceptance test of the ruleset
+
+Run that after any change to `lean/`, and report the result. A change to a rule
+is not finished until this test passes.
+
+## Commits
+
+Follow the commit rules of the global AGENTS.md. Commit each logical unit.
