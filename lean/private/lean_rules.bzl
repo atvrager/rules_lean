@@ -11,12 +11,15 @@ package root (`-R`), and it looks up an imported module `A.B` as
   parallel, and a change in one module re-elaborates only its importers.
 * The module name of a source is its path relative to the Bazel package
   directory. A `BUILD.bazel` file in `lean/` therefore gives `lean/Foo.lean` the
-  module name `Foo`. Olean outputs are stored under the module path, so a
-  `LEAN_PATH` entry finds them.
+  module name `Foo`.
 
-A library exposes the directories that hold its oleans. The consuming rule
-joins them with the standard library directory into `LEAN_PATH`, and declares
-every transitive olean as an action input.
+Lean resolves an import by the *first* `LEAN_PATH` entry that holds the module's
+top-level directory, and it does not continue to later entries. Two entries
+`d1/Lisp/Expr.olean` and `d2/Lisp/Eval.olean` do not make `import Lisp.Eval`
+resolve when `d1` comes first. The oleans of a package therefore go into one
+directory, the output directory of the package, and that directory is the
+`LEAN_PATH` entry. A consuming action declares the oleans it needs, so the
+directory holds exactly those files.
 """
 
 load("//lean:toolchain.bzl", "TOOLCHAIN_TYPE")
@@ -32,7 +35,7 @@ LeanLibraryInfo = provider(
 
 _LEAN_BIN = "bin/lean"
 _STDLIB_DIR = "lib/lean"
-_OLEAN_DIR_SUFFIX = ".olean"
+_OLEAN_SUFFIX = ".olean"
 
 def _module_rel(ctx, src):
     """Return the module path of a source: "Foo/Bar" for "Foo/Bar.lean".
@@ -64,6 +67,12 @@ def _dir_of(path, suffix):
         fail("path '%s' does not end with '%s'" % (path, suffix))
     return path[:-len(suffix)]
 
+def _parent_of(path, child):
+    """The directory that holds `child`, as "." when that is the root."""
+    if path == child:
+        return "."
+    return _dir_of(path, "/" + child)
+
 # Lean derives the module name of a file from its path relative to a root, and
 # it refuses a file outside that root. It resolves the file path first, and
 # Bazel inputs are symlinks, so derive the root from the resolved path.
@@ -90,32 +99,30 @@ esac
 """
 
 def _stdlib_dir(tc, attribute):
-    """The standard library directory, as an execpath or as a runfiles path."""
+    """The standard library directory, as an execution path or runfiles path."""
     return _dir_of(getattr(tc.lean, attribute), _LEAN_BIN) + _STDLIB_DIR
 
 def _transitive(deps, field):
     return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps])
 
 def _compile_modules(ctx, tc, srcs, deps, extra_flags):
-    """Compile one action per source. Returns oleans and their directories."""
+    """Compile one action per source. Returns the oleans and their directory."""
     dep_oleans = _transitive(deps, "oleans")
 
     # Lean searches LEAN_PATH in order and replaces its built-in path, so the
     # standard library must be an explicit entry.
     lean_path = ":".join(_transitive(deps, "olean_dirs").to_list() + [_stdlib_dir(tc, "path")])
 
-    out_prefix = ctx.label.name + _OLEAN_DIR_SUFFIX
     olean_dir = None
     runfiles_olean_dir = None
     oleans = []
-
     for src in srcs:
         module_rel = _module_rel(ctx, src)
-        out = ctx.actions.declare_file("%s/%s.olean" % (out_prefix, module_rel))
+        out = ctx.actions.declare_file("%s%s" % (module_rel, _OLEAN_SUFFIX))
 
         if olean_dir == None:
-            olean_dir = _dir_of(out.path, "/%s.olean" % module_rel)
-            runfiles_olean_dir = _dir_of(out.short_path, "/%s.olean" % module_rel)
+            olean_dir = _parent_of(out.path, "%s%s" % (module_rel, _OLEAN_SUFFIX))
+            runfiles_olean_dir = _parent_of(out.short_path, "%s%s" % (module_rel, _OLEAN_SUFFIX))
 
         ctx.actions.run_shell(
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
