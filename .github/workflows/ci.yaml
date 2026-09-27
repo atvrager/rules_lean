@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The ruleset, the demos, and the proofs, on both supported Bazel versions.
+  ruleset:
+    name: Ruleset (Bazel ${{ matrix.bazel }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bazel: ["8.*", "9.*"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazel-version: ${{ matrix.bazel }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ matrix.bazel }}
+          repository-cache: true
+      - name: Test
+        run: bazel test //...
+      - name: Build the native demos
+        run: bazel build //examples/rtl:rtl_emit //examples/scheme:scheme
+
+  # The path a user takes: a module that depends on rules_lean and registers a
+  # toolchain.
+  install:
+    name: Install path
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-install
+          repository-cache: true
+      - name: Test the hello module
+        run: cd e2e/hello && bazel test //...
+
+  # The compiler test suite of the Lean repository, at the tag of the toolchain.
+  # This is the claim for the BCR: the ruleset builds what upstream builds.
+  upstream:
+    name: Upstream Lean suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-upstream
+          repository-cache: true
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+      - name: Build the upstream piles
+        run: |
+          cd e2e/upstream
+          bazel build @lean_samples//tests:pile_elab @lean_samples//tests:pile_compile
+      - name: Report the pile sizes
+        run: |
+          cd e2e/upstream
+          echo "### Upstream piles" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Pile | Targets |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          for pile in elab compile; do
+            count=$(bazel query "@lean_samples//tests:pile_$pile" --output=label_kind 2>/dev/null | wc -l)
+            echo "| $pile | $count |" >> "$GITHUB_STEP_SUMMARY"
+          done
