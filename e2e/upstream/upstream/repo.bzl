@@ -21,7 +21,7 @@ package(default_visibility = ["//visibility:public"])
 
 _LIBRARY = """lean_library(
     name = "{name}",
-    srcs = ["{src}"],{deps}{flags}
+    srcs = ["{src}"],{deps}{flags}{env}
 )
 
 """
@@ -67,6 +67,25 @@ def _stem(module):
 def _parent(path):
     parts = path.split("/")
     return "/".join(parts[:-1])
+
+def _init_env(rctx, path):
+    """The `export` lines of a test's `.init.sh` file, as the driver reads them.
+
+    Upstream runs each test with the environment of `<file>.init.sh`. One file
+    changes Lean's own environment: `nat_size_limit.lean.init.sh` sets
+    `LEAN_NAT_MAX_SIZE=16`.
+    """
+    if not rctx.path(path + ".init.sh").exists:
+        return {}
+
+    env = {}
+    for line in rctx.read(path + ".init.sh").split("\n"):
+        line = line.strip()
+        if not line.startswith("export ") or "=" not in line:
+            continue
+        name, _, value = line[len("export "):].partition("=")
+        env[name.strip()] = value.strip().strip('"')
+    return env
 
 def _lean_files(rctx, pile):
     """Every .lean file of a pile, relative to the repository root."""
@@ -127,10 +146,14 @@ def _samples_repo_impl(rctx):
                     if dep in labels and dep != module
                 ]
 
+                env = _init_env(rctx, path)
                 body += _LIBRARY.format(
                     deps = "\n    deps = [\n" + "".join(
                         ['        "%s",\n' % dep for dep in deps]
                     ) + "    ]," if deps else "",
+                    env = "\n    extra_env = {\n" + "".join(
+                        ['        "%s": "%s",\n' % (name, value) for name, value in sorted(env.items())]
+                    ) + "    }," if env else "",
                     flags = "\n    extra_flags = [\n" + "".join(
                         ['        "%s",\n' % flag for flag in flags]
                     ) + "    ]," if flags else "",

@@ -10,7 +10,8 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 Status: pre-0.1.0. M0, M2b, and F0 work. `bazel test //...` passes 4 tests:
 `examples/rtl`, `examples/scheme`, `lisp`, and `proofs`. CI builds the compiler
 test piles of the Lean repository at the tag of the toolchain: 3125 of 3133
-`tests/elab` files, and 71 native programs from `tests/compile`. See
+`tests/elab` files (7 excluded, each with a reason), and 71 native programs
+from `tests/compile`. See
 [docs/upstream-suite.md](docs/upstream-suite.md).
 
     bazel test //...                                 # the ruleset and the demos
@@ -153,7 +154,7 @@ lean_axiom_test(
 
 | Rule | Produces | Notes |
 | --- | --- | --- |
-| `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`; one action per source |
+| `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`, `extra_env`; one action per source |
 | `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
 | `lean_prebuilt_library` | an importable olean tree | planned, M1 |
 | `lean_binary` | a native executable | `main` names the module with `main`, as Lake's `root :=`; `data` reaches runfiles |

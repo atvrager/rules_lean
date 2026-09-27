@@ -40,12 +40,10 @@ upstream.samples(
     #   Reformat, readDir, parsePrelude   read a path relative to the cwd
     #   importStructure                   runs `lean` as a subprocess
     #   async_systems_info                spawns a process, denied in the sandbox
-    #   nat_size_limit                    needs LEAN_NAT_MAX_SIZE=16
     excludes = [
         "tests/elab/async_select_channel.lean",
         "tests/elab/async_systems_info.lean",
         "tests/elab/importStructure.lean",
-        "tests/elab/nat_size_limit.lean",
         "tests/elab/parsePrelude.lean",
         "tests/elab/readDir.lean",
         "tests/elab/Reformat.lean",

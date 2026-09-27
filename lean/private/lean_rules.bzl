@@ -115,13 +115,18 @@ def _stdlib_dir(tc, attribute):
 def _transitive(deps, field):
     return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps])
 
-def _compile_modules(ctx, tc, srcs, deps, extra_flags):
+def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
     """Compile one action per source. Returns the oleans and their directory."""
     dep_oleans = _transitive(deps, "oleans")
 
     # Lean searches LEAN_PATH in order and replaces its built-in path, so the
     # standard library must be an explicit entry.
     lean_path = ":".join(_transitive(deps, "olean_dirs").to_list() + [_stdlib_dir(tc, "path")])
+
+    # The upstream test driver runs a test with the environment of its
+    # `.init.sh` file, so the environment is an attribute.
+    env = {"LEAN_PATH": lean_path}
+    env.update(extra_env)
 
     olean_dir = None
     runfiles_olean_dir = None
@@ -145,12 +150,7 @@ exec "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
             ),
             outputs = [out],
             tools = [tc.lean],
-            env = {
-                "LEAN_PATH": lean_path,
-                "LEAN_OUT": out.path,
-                "LEAN_SRC": src.path,
-                "LEAN_MODREL": module_rel,
-            },
+            env = dict(env, LEAN_OUT = out.path, LEAN_MODREL = module_rel, LEAN_SRC = src.path),
             mnemonic = "LeanOlean",
             progress_message = "Lean %s" % module_rel,
         )
@@ -168,7 +168,7 @@ exec "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
 
 def _lean_library_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
-    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags)
+    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags, ctx.attr.extra_env)
 
     return [
         DefaultInfo(files = result.oleans),
@@ -196,6 +196,10 @@ lean_library = rule(
             providers = [LeanLibraryInfo],
             doc = "Lean libraries that these sources import.",
         ),
+        "extra_env": attr.string_dict(
+            doc = "Environment variables for the `lean` action, as the upstream " +
+                  "test driver takes them from a test's `.init.sh` file.",
+        ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",
         ),
@@ -211,7 +215,7 @@ lean_library = rule(
 
 def _lean_test_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
-    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags)
+    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags, ctx.attr.extra_env)
 
     entry = ctx.file.entry
     if entry not in ctx.files.srcs:
@@ -274,6 +278,9 @@ lean_test = rule(
             allow_single_file = [".lean"],
             mandatory = True,
             doc = "The `.lean` file to run. It must be one of `srcs`.",
+        ),
+        "extra_env": attr.string_dict(
+            doc = "Environment variables for the `lean` actions and the test run.",
         ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`.",
@@ -379,6 +386,9 @@ lean_binary = rule(
         "deps": attr.label_list(
             providers = [LeanLibraryInfo],
             doc = "Lean libraries that the program imports.",
+        ),
+        "extra_env": attr.string_dict(
+            doc = "Environment variables for the code generation actions.",
         ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",

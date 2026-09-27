@@ -36,10 +36,15 @@ The excluded files of `tests/elab`, and why:
 | Files | Reason |
 | --- | --- |
 | `async_select_channel.lean`, `sync_mutex.lean` | the upstream CMake excludes them from the pile |
-| `Reformat.lean`, `parsePrelude.lean`, `readDir.lean` | read a path relative to the working directory |
+| `Reformat.lean`, `parsePrelude.lean`, `readDir.lean` | read a path relative to the working directory, so they need fixture inputs and the driver's working directory |
 | `importStructure.lean` | runs `lean` as a subprocess |
 | `async_systems_info.lean` | spawns a process, which the sandbox refuses |
-| `nat_size_limit.lean` | needs `LEAN_NAT_MAX_SIZE=16` from its `.init.sh` |
+
+`nat_size_limit.lean` built once the generator read its `.init.sh` and passed
+`LEAN_NAT_MAX_SIZE=16` through the `extra_env` attribute of `lean_library`. That
+is the upstream convention: a test's environment comes from its `.init.sh` file.
+The remaining four need the working directory and fixture inputs, or a
+subprocess, which is stage 2 work on the rule.
 
 Those six are the test driver, not the compiler: a working directory, fixture
 inputs, environment variables, and a subprocess. Stage 2 adds them as rule
@@ -105,7 +110,7 @@ regression names the pile and the file.
 
 | Stage | Deliverable | Acceptance |
 | --- | --- | --- |
-| 1 | done: fetch, scan, generate, elaborate `tests/elab`; link `tests/compile` | `bazel build @lean_samples//tests:pile_elab @lean_samples//tests:pile_compile` is green |
+| 1 | done: fetch, scan, generate, elaborate `tests/elab`; link `tests/compile` | `bazel build @lean_samples//tests:pile_elab @lean_samples//tests:pile_compile` is green: 3126 elab files and 71 native programs, 3197 targets, 7 files excluded with a reason each |
 | 2 | expected-output comparison for `tests/compile`, `tests/ir`, `tests/docparse` | the fail list matches upstream's own list |
 | 3 | `tests/elab_fail`: inverted verdict plus message comparison | a planted wrong message fails the test |
 | 4 | the CI job reports per-pile counts into the run summary | the summary matches the inventory table |
