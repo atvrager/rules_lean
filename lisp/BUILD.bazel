@@ -1,0 +1,60 @@
+load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# One target per module. The rule does not read import lines yet, so the dep
+# edges come from these lists. See "Import graph" in the README.
+
+lean_library(
+    name = "word",
+    srcs = ["VM/Word.lean"],
+)
+
+lean_library(
+    name = "expr",
+    srcs = ["Lisp/Expr.lean"],
+    deps = [":word"],
+)
+
+lean_library(
+    name = "eval",
+    srcs = ["Lisp/Eval.lean"],
+    deps = [":expr"],
+)
+
+lean_library(
+    name = "machine",
+    srcs = ["VM/Machine.lean"],
+    deps = [":word"],
+)
+
+lean_library(
+    name = "compile",
+    srcs = ["Lisp/Compile.lean"],
+    deps = [":expr"],
+)
+
+# Root module: imports the whole machine, so building it builds everything.
+lean_library(
+    name = "lisp",
+    srcs = ["Lisp.lean"],
+    deps = [
+        ":compile",
+        ":eval",
+        ":machine",
+        ":word",
+    ],
+)
+
+# Runs the evaluator and the machine on the same expressions and compares.
+lean_test(
+    name = "lisp_test",
+    size = "small",
+    srcs = ["Lisp/Test/Eval.lean"],
+    entry = "Lisp/Test/Eval.lean",
+    deps = [
+        ":compile",
+        ":eval",
+        ":machine",
+    ],
+)
