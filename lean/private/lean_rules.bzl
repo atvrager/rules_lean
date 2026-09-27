@@ -47,16 +47,24 @@ def _module_rel(ctx, src):
     directory.
     """
     rel = src.short_path
-    bin_prefix = ctx.bin_dir.path + "/"
 
+    # A file of another repository has a "../<repo>/" prefix, which is not a
+    # path inside this workspace. Strip it, leaving the repository-relative
+    # path, which is what the package prefix is compared against.
+    if rel.startswith("../"):
+        tail = rel[3:]
+        slash = tail.find("/")
+        rel = tail[slash + 1:] if slash >= 0 else tail
+
+    bin_prefix = ctx.bin_dir.path + "/"
     if rel.startswith(bin_prefix):
         rel = rel[len(bin_prefix):]
 
     package = ctx.label.package
     if package:
         if not rel.startswith(package + "/"):
-            fail("%s: %s is outside package %s. Declare it in a lean_library in " +
-                 "its own package." % (ctx.label, src.short_path, package))
+            fail(("%s: %s is outside package %s. Declare it in a lean_library " +
+                  "in its own package.") % (ctx.label, src.short_path, package))
         rel = rel[len(package) + 1:]
 
     if not rel.endswith(".lean"):
@@ -290,12 +298,12 @@ def _lean_binary_impl(ctx):
     modules = {}
     for src in ctx.files.srcs:
         rel = _module_rel(ctx, src)
-        modules[rel] = (rel, src)
+        modules[rel.replace("/", ".")] = (rel, src)
     for info in [dep[LeanLibraryInfo] for dep in ctx.attr.deps]:
         for rel, name, file in info.module_sources.to_list():
             modules[name] = (rel, file)
 
-    entry = modules.get(ctx.attr.main)
+    entry = modules.get(ctx.attr.main.replace("/", "."))
     if entry == None:
         fail("%s: no module named '%s'. Known modules: %s" % (
             ctx.label,

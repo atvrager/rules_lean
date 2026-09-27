@@ -27,7 +27,7 @@ piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
 | Tier | What it is | Where |
 | --- | --- | --- |
 | Unit | one rule, one feature, seconds | `e2e/`, one bzlmod module per case |
-| Shape | a project the size of a real one, in the repository | `examples/rtl`, the RTL demo |
+| Shape | projects the size of real ones, in the repository | `examples/rtl` and `examples/scheme` |
 | Math | theorems, with the proof technique and the axiom footprint of each | `proofs/` |
 | Integration | a Lean project that grows with the ruleset | `lisp/`, the Lisp machine |
 | Field | projects outside this repository that use the ruleset | not in this repository |
@@ -48,6 +48,11 @@ default build gates it. It has 10 files:
 | A project test | `//examples/rtl:rtl_test`, 9 checks |
 | A native command line tool | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` |
 | A runfiles data file | `Spec.txt`, read by the tool at run time |
+
+`examples/scheme` is a Scheme interpreter in phases: lexer, reader, compiler to
+core forms, environment, primitives, evaluator, and a native REPL. Eleven
+modules, 31 checks, and a `lean_binary` that reads a program from a runfiles
+data file. See [docs/scheme-interpreter.md](docs/scheme-interpreter.md).
 
 A demo with Mathlib, executables, and a test driver lands with M1.
 
