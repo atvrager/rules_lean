@@ -7,19 +7,50 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. Nothing builds yet. This README is the design.
+Status: pre-0.1.0. M0 works: `cd e2e/hello && bazel test //...` passes.
 
 ## The problem
 
-`lake build` is a single tool invocation over an entire package graph:
+`lake build` is a single tool invocation over an entire package graph.
 
 | Lake | Bazel (this ruleset) |
 | --- | --- |
 | one cache key for the whole build | action key per module |
-| one process, internal parallelism | `--jobs` × sandboxed actions, remote-cacheable |
-| Mathlib = ~5 GB of oleans to self-host or fetch whole | only the import closure of your modules |
-| toolchain from `~/.elan`, ambient | pinned tarball, sha256, per-platform |
-| cache sits on disk, local only | disk cache + remote cache + remote execution |
+| one process, internal parallelism | `--jobs` times sandboxed actions, remote-cacheable |
+| Mathlib: about 5 GB of oleans, fetched whole | the import closure of your modules |
+| toolchain from `~/.elan`, ambient | pinned tarball, sha256, per platform |
+| cache on the local disk only | disk cache, remote cache, remote execution |
+
+## Test suites
+
+| Tier | What it is | Where |
+| --- | --- | --- |
+| Unit | one rule, one feature, seconds | `e2e/`, one bzlmod module per case |
+| Integration | a Lean project that grows with the ruleset | `lisp/`, the Lisp machine |
+| Field | projects outside this repository that use the ruleset | not in this repository |
+
+The Lisp machine is the long-term integration suite: a small Lisp with a
+correctness proof against Mathlib, compiled to a stack machine. Each ruleset
+feature gets a piece of it. See [docs/lisp-machine.md](docs/lisp-machine.md).
+
+## Requirements from real projects
+
+The ruleset serves projects that use Lean at scale. Each requirement below is a
+rule feature with a test in this repository.
+
+1. A module root that is not the repository root. The rule uses the Bazel
+   package directory as the root, so a `BUILD.bazel` file in `lean/` gives
+   `lean/Foo.lean` the module name `Foo`.
+2. Generated `.lean` files as `srcs`.
+3. `lean_binary` with a main module by name, as Lake's `root :=` does, so a
+   project with many executables does not repeat file paths.
+4. `extra_flags` and `extra_env` per target.
+5. Runtime `data` for runfiles.
+6. Cache-covered dependencies beyond Mathlib. The list `isPartOfMathlibCache` in
+   mathlib4 `Cache/IO.lean` holds `Batteries`, `Aesop`, `Cli`, `ImportGraph`,
+   `LeanSearchClient`, `Plausible`, `Qq`, `ProofWidgets`, and more, so a
+   dependency of a Mathlib project can come from the cache with no source build.
+7. Version entries for 4.34.x, including release candidates.
 
 ## Install
 
@@ -29,18 +60,14 @@ bazel_dep(name = "rules_lean", version = "0.1.0")
 
 lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
 
-# Lean version: read from your //:lean-toolchain, or pin explicitly.
+# The version comes from //:lean-toolchain, or from the version attribute.
 lean.toolchain(toolchain_file = "//:lean-toolchain")
 
-# Mathlib oleans, content-addressed by (mathlib rev, toolchain), fetched on demand.
-lean.mathlib(rev = "v4.29.1")
-
-use_repo(lean, "lean_toolchains", "mathlib")
+use_repo(lean, "lean_toolchains")
 register_toolchains("@lean_toolchains//:all")
 ```
 
-`lean-toolchain` carries the version of your Lake workspace. Bazel and `lake`
-then use the same version. `use_repo` and `register_toolchains` complete the setup.
+`use_repo` and `register_toolchains` complete the setup.
 
 ## Use
 
@@ -64,13 +91,14 @@ lean_library(
 
 lean_test(
     name = "proofs_test",
-    library = ":proofs",
+    srcs = ["Proofs.lean"],
     entry = "Proofs.lean",
+    deps = [":arith"],
 )
 
 lean_axiom_test(
     name = "axioms_test",
-    library = ":proofs",
+    deps = [":proofs"],
     theorems = ["Proofs.card_empty"],
 )
 ```
@@ -79,28 +107,27 @@ lean_axiom_test(
 
 | Rule | Produces | Notes |
 | --- | --- | --- |
-| `lean_library` | `.olean` per module | import edges inferred, one action per `srcs` entry |
-| `lean_prebuilt_library` | importable olean tree | wraps upstream/generated olean sets |
-| `lean_binary` | native executable | `lean -c` → `leanc` link, `@[extern]` FFI via `cc_deps` |
-| `lean_test` | test | elaborates, then runs `main`/`#eval` entry |
-| `lean_axiom_test` | test | transitive axiom deps ⊆ `allowed_axioms` |
-| `lean_emit` | `.c` / `.bc` / `.ll` | for AOT pipelines and audits |
-| attribute `forbid_sorry` | — | default `True`; `sorryAx` anywhere in `srcs` fails the action |
+| `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`; one action per source |
+| `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
+| `lean_prebuilt_library` | an importable olean tree | planned, M1 |
+| `lean_binary` | a native executable | planned, M2; `main` names the main module |
+| `lean_axiom_test` | a test | planned, M4 |
+| `lean_toolchain` | a toolchain | write it in a BUILD file for a local compiler |
 
-The default axiom list holds Lean's three standard axioms
-(`propext`, `Classical.choice`, `Quot.sound`). `sorryAx` and `Lean.ofReduceBool`
-are not in the default list.
+The module name of a source is its path relative to the Bazel package
+directory, as in Lake's `srcDir`. `lean/Foo.lean` in package `//lean` is
+module `Foo`.
 
 ## Architecture
 
 ```
 lean-toolchain ───┐                      (version string, elan format)
-lake-manifest.json┤                      (lockfile: ws deps, pinned revs)
+lake-manifest.json┤                      (lockfile: workspace deps, pinned revs)
                   ▼
         ┌──────────────────────────────────────────────────┐
         │ @lean_toolchains  — release tarball, sha256       │
-        │   bin/lean, bin/leanc, lib/libleanshared.so       │
-        │   lib/lean/{Init,Std,Lean,Lake}.olean  (prebuilt) │
+        │   bin/lean, lib/lean/libleanshared.so             │
+        │   lib/lean/**                    (prebuilt oleans)│
         └──────────────────────────────────────────────────┘
         ┌──────────────────────────────────────────────────┐
         │ @mathlib — .ltar from cache.mathlib.org, leantar  │
@@ -112,24 +139,29 @@ lake-manifest.json┤                      (lockfile: ws deps, pinned revs)
 
 ### Toolchain
 
-A Lean toolchain is a release tarball from `leanprover/lean4`. A repository rule
-downloads the tarball, verifies a sha256 from `lean/private/known_lean_versions.bzl`,
-and declares it as a Bazel toolchain:
+A Lean toolchain is a release tarball from `leanprover/lean4`. A repository
+rule downloads the tarball, verifies a sha256 from
+`lean/private/known_lean_versions.bzl`, and declares a Bazel toolchain:
 
 ```
-@lean_toolchains                hub repo, holds the toolchain targets
-  :lean_toolchain_linux_x86_64      -> @lean_toolchain_linux_x86_64
-  :lean_toolchain_darwin_aarch64    -> @lean_toolchain_darwin_aarch64
+@lean_toolchains                hub repository, holds the toolchain targets
+  :lean_4_34_1_linux_x86_64         -> @lean_toolchain_4_34_1_linux_x86_64
+  :lean_4_34_1_darwin_aarch64       -> @lean_toolchain_4_34_1_darwin_aarch64
 ```
 
 `register_toolchains("@lean_toolchains//:all")` registers every target. Bazel
 filters them by platform constraint and picks the match for the host. Rules read
 the toolchain through `toolchain_type @rules_lean//lean:toolchain_type`. No rule
-runs `elan`, and no rule reads `~/.elan`.
+runs `elan` and no rule reads `~/.elan`.
 
 `lean_toolchain(...)` is also a public rule. Write it in a `BUILD.bazel` file to
 use a Lean binary from another source, for example a patched compiler or a local
 checkout.
+
+Asset names and sums come from the GitHub release API:
+
+    curl -sSL https://api.github.com/repos/leanprover/lean4/releases/tags/v4.34.1 \
+      | grep -E '"(name|digest)"'
 
 #### Where the version lives
 
@@ -137,49 +169,64 @@ Four candidates. All tests ran on Bazel 9.2.0.
 
 | Candidate | Result |
 | --- | --- |
-| `load()` a constant in `MODULE.bazel` | Not possible. Bazel stops with: `` `load` statements may not be used in MODULE.bazel files ``. |
-| `lean.toolchain(version = "4.29.1")` | Works. The version string then exists twice. |
-| Read `//:lean-toolchain` in the extension | Works. A tag label resolves in your module, and a repository rule that the extension instantiates reads the file. The test returned `leanprover/lean4:v4.29.1`. |
-| Download the tarball in a build action | Not possible. An action has no network. |
+| `load()` a constant in `MODULE.bazel` | Rejected: `` `load` statements may not be used in MODULE.bazel files ``. |
+| `lean.toolchain(version = "4.34.1")` | Works. The version string then exists twice. |
+| Read `//:lean-toolchain` in the extension | Works. A tag label resolves in your module, and a repository rule that the extension instantiates reads the file. The test returned `leanprover/lean4:v4.34.1`. |
+| Download the tarball in a build action | Not possible: an action has no network. |
 
-Decision: the version string lives in `lean-toolchain`. `MODULE.bazel` points at
-that file. The toolchain itself is still a Bazel target, because the repository
-rule that generates it creates the target.
+The version string lives in `lean-toolchain`. `MODULE.bazel` points at that
+file. Two reasons:
 
-```starlark
-lean.toolchain(toolchain_file = "//:lean-toolchain")   # normal case
-lean.toolchain(version = "4.29.1")                     # no Lake workspace
-```
-
-Two reasons for the file:
-
-1. It is the Lean convention. `elan`, `lake`, and the VS Code extension read
-   `lean-toolchain`. A project on this ruleset stays a normal Lake project.
-2. Mathlib hashes the content of that file into its olean cache key. A second
-   version source would let one project request Lean X and Mathlib oleans for Lean Y.
+1. It is the Lean convention. `elan`, `lake`, and the editor read `lean-toolchain`.
+2. Mathlib hashes the content of that file into its olean cache key.
 
 Guards:
 
 - `toolchain_file` and `version` together must be equal, or the build stops.
-- The file must equal the `lean-toolchain` file inside the pinned Mathlib
-  revision. The Mathlib cache key hashes `lean-toolchain` and `Lean.githash`, so
-  a mismatch yields oleans that the toolchain cannot load.
+- The file must equal the `lean-toolchain` of the pinned Mathlib revision.
+  The Mathlib cache key hashes `lean-toolchain` and `Lean.githash`, so a
+  mismatch yields oleans that the toolchain cannot load. Planned, M1.
 
-`elan` stays available for developer commands (`lake update`,
+`elan` remains usable for developer commands (`lake update`,
 `lake exe cache get`, editor support). Its state (`ELAN_TOOLCHAIN`,
-`elan override`, the default toolchain) never enters a build. Two developers with
-different elan defaults produce the same Bazel output.
+`elan override`, the default toolchain) never enters a build.
 
-The tarball also supplies the toolchain contents:
+#### Action inputs
 
-- Prebuilt oleans for `Init`/`Std`/`Lean`/`Lake`. The build never compiles the
-  standard library.
-- Layout of v4.29.1, linux x86_64: 2.7 GB total, 2.5 GB of it `lib/lean`. The
-  toolchain repo splits into a **driver** (bin, shared libraries) and a
-  **stdlib olean tree**. An action and its remote-cache digest then carry only
-  the part they use.
-- An unknown version stops the build. The user must then pass `sha256 = {...}`
-  for each platform. The ruleset never downloads an unverified file.
+Lean opens five files per imported module: `.olean`, `.olean.private`,
+`.olean.server`, `.ir`, `.ir.sig`. Measured with `strace` on 4.34.1. It does not
+open `.ilean` during compilation. The generated repository declares a `stdlib`
+filegroup from those patterns, plus `lib/lean/*.so*`, the shared library of the
+compiler itself.
+
+Cost, Lean 4.34.1, linux x86_64:
+
+| Files | Size |
+| --- | --- |
+| `.olean.private` | 1298 MiB (2518 files) |
+| `.ir` | 358 MiB (2518 files) |
+| `.olean` | 340 MiB (2520 files) |
+| `.ilean`, not an input | 83 MiB (2520 files) |
+| `.olean.server` | 31 MiB (2518 files) |
+| `lib/lean` total | 2.8 GB |
+
+The action input set is 2.0 GB instead of 2.8 GB. Bazel hashes each file once
+and reuses the digest, so the cost is a one-time hash plus the digest set per
+action. A later milestone narrows the set to the modules a source imports.
+
+#### The `-R` root
+
+Lean derives a module name from the file path relative to `-R`, and it refuses a
+file outside that root. It resolves the file path first
+(`moduleNameOfFileName` in `Lean/Util/Path.lean`). A sandbox holds real
+directories and symlinked files, so a root computed from the sandbox path does
+not contain the resolved file. The rules derive the root at execution time from
+the resolved file path. `_ROOT_SNIPPET` in `lean/private/lean_rules.bzl`.
+
+An olean must sit at `<LEAN_PATH entry>/<module path>.olean`. Test: after a
+module `b.C` is written to `<dir>/b/C.olean`, `import b.C` resolves. Oleans are
+independent of the absolute path of the build: two builds of the same module in
+two directories produce the same sha256.
 
 ### Lake
 
@@ -189,13 +236,14 @@ as a lockfile.
 | | |
 | --- | --- |
 | Parsed | `lake-manifest.json`: package name, git URL, pinned rev |
-| Never | `lakefile.lean` evaluation (arbitrary Lean at analysis time), `lake` at build time, network from a build action |
+| Never | `lakefile.lean` evaluation, `lake` at build time, network from a build action |
 | Convenience | `lakefile.toml` read for package metadata when no manifest exists |
-| Dev-only | `lake update` to (re)generate the manifest; `elan` may be used here |
+| Dev-only | `lake update` to regenerate the manifest |
 
 The ruleset builds the sources of your project in Bazel, one module per action.
 It builds a workspace dependency in the same way, unless the upstream cache
-covers that dependency (Mathlib). Then it uses prebuilt oleans.
+covers that dependency (Mathlib, and the packages in `isPartOfMathlibCache`).
+Then it uses prebuilt oleans.
 
 ### Mathlib
 
@@ -216,7 +264,7 @@ Design:
    modules that import it, and the Bazel keys follow the import edges.
 3. Add the aggregate target `@mathlib//:Mathlib` for `import Mathlib`.
 4. Assume that oleans are platform-independent. The upstream cache serves one
-   artifact set for all platforms. Verify this at M0. Code from `native_decide`
+   artifact set for all platforms. Verify this at M1. Code from `native_decide`
    goes into the linked binary, not into the olean.
 
 The cold fetch uses the network. The Bazel repository cache holds the result.
@@ -228,77 +276,85 @@ The ruleset keeps these invariants:
 
 | Invariant | Reason |
 | --- | --- |
-| One action per module (`.lean` → `.olean`) | Bazel runs many actions in parallel. `lake` runs one process. |
-| Action key = toolchain + flags + source + dep oleans | The key comes from Bazel. It is never a "whole package" key. |
-| `--root` and repo-relative paths only | No absolute path enters the action key or an olean. Sandboxes on other machines then hit the same cache entry. |
-| Declared outputs only: `.olean`, plus `.ilean` or `.c` on request | Test result: `lean -o x.olean Foo.lean` writes one file. |
+| One action per module (`.lean` to `.olean`) | Bazel runs many actions in parallel. `lake` runs one process. |
+| Action key: toolchain, flags, source, dep oleans | The key comes from Bazel. It is never a whole-package key. |
+| Repo-relative paths | No absolute path enters the action key. Sandboxes on other machines hit the same cache entry. |
+| Declared outputs only: the `.olean` | Test: `lean -o x.olean Foo.lean` writes one file. |
 | One dep edge per import | A change in a leaf module re-elaborates only the modules that import it. |
-| Split toolchain inputs | The 2.5 GB `lib/lean` tree does not enter every action digest. |
-| Network access in repository rules only | An action stays hermetic and needs no egress for remote execution. |
-| `--remote_download_minimal` (`--remote_download_regex='.*\.olean'` for a local link) | Remote execution transfers only the files that the next step reads. |
+| Split toolchain inputs | The action carries 2.0 GB of `lib/lean`, not 2.8 GB. |
+| Network access in repository rules only | An action stays hermetic and fits remote execution. |
+| `--remote_download_minimal` | Remote execution transfers only the files the next step reads. |
 
-Risk to settle at M0: do Lean oleans record the source path? Test: build the
-same module in two sandbox roots and compare the oleans byte for byte. If the
-paths differ, normalize them or document the limit.
+Measured on the M0 e2e (`e2e/hello`, two tests, three modules):
 
-A later option: one persistent worker holds the imported `Mathlib` environment
-for several modules and lowers the import cost per action. Set
+| Event | Actions |
+| --- | --- |
+| first build | 6 sandbox actions |
+| rebuild, no change | 1 action: the test run. Olean actions cached. |
+| edit one leaf module | 3 sandbox actions, 1 test re-run. The unrelated test stayed cached. |
+
+A later option: one persistent worker holds the imported Mathlib environment for
+several modules and lowers the import cost per action. Set
 `--worker_max_instances` to the fan-out. Not in v0.
 
 ## Decisions
 
 | # | Decision | Reason |
 | --- | --- | --- |
-| D1 | Hermetic toolchain from release tarballs; no `elan` at build time | The same tarball builds on every machine. `elan` stays a developer tool. |
-| D2 | The version string lives in `lean-toolchain`; `MODULE.bazel` points at it with a label | `load()` is not allowed in `MODULE.bazel` (test result). A second copy of the version can disagree with the Mathlib cache key and with `lake`. |
+| D1 | Hermetic toolchain from release tarballs; no `elan` at build time | The same tarball builds on every machine. |
+| D2 | The version string lives in `lean-toolchain` | `load()` is rejected in `MODULE.bazel`. A second copy can disagree with the Mathlib cache key and with `lake`. |
 | D3 | `lake-manifest.json` is the only dep source; never evaluate `lakefile.lean` | An evaluator needs a toolchain, and analysis cannot run Lean. A build action must not use the network. |
-| D4 | Mathlib from prebuilt oleans, never from source | A source build of Mathlib needs hours and ~5 GB. |
-| D5 | Import-closure fetch, not whole-cache fetch | Mathlib is ~5 GB. Most users need a fraction of it. |
+| D4 | Mathlib from prebuilt oleans, never from source | A source build of Mathlib needs hours and about 5 GB. |
+| D5 | Import-closure fetch, not whole-cache fetch | Mathlib is about 5 GB. Most users need a fraction of it. |
 | D6 | One prebuilt target per module, generated by a repository rule | The dep edges then match the imports, and the cache keys follow. |
 | D7 | bzlmod only; Bazel 8 and 9 | Bazel 9 removed the native cc rules (test result), so `rules_cc` is a hard dependency. |
-| D8 | Module name `rules_lean` | The name is free on the BCR (test result). `pulseengine/rules_lean` and `tomato-bazel/rules_lean` use it on GitHub. Publish early to hold the name. |
+| D8 | Module name: path relative to the Bazel package directory | It matches Lake's `srcDir`, and it keeps the olean path equal to the module path. |
+| D9 | Module name `rules_lean` | The name is free on the BCR (test result). `pulseengine/rules_lean` and `tomato-bazel/rules_lean` use it on GitHub. Publish early to hold the name. |
 
 ## Non-goals
 
-- Reimplementing Lake's resolver or `lake build`. `lake update` stays the way to
-  produce a manifest.
+- Reimplementing the Lake resolver or `lake build`. `lake update` produces a manifest.
 - Lean 3.
-- Being a general Lean IDE/LSP server. `.ilean` is emitted because Lean emits it.
+- A Lean IDE or LSP server. `.ilean` is emitted when a user asks for it.
 - Windows in 0.1.0. Lean and `leanc` on MSVC need separate work. Linux and macOS
-  on x86_64 and aarch64 are in scope for 0.1.0.
+  on x86_64 and aarch64 are in scope.
 
-## Platforms & versions
+## Platforms and versions
 
 | | 0.1.0 |
 | --- | --- |
-| Bazel | 8.x, 9.x (bzlmod only) |
-| Lean | any tagged release with a pinned sha256; 4.29.1 and 4.32.2 exercised |
-| Linux x86_64/aarch64 | supported |
-| macOS x86_64/aarch64 | supported |
-| Windows | unsupported |
+| Bazel | 8.x, 9.x, bzlmod only |
+| Lean | tagged releases with a sha256 in the table; 4.29.1, 4.32.2, 4.34.0-rc1, 4.34.1 |
+| Linux x86_64, aarch64 | supported |
+| macOS x86_64, aarch64 | supported |
+| Windows | not supported |
 
 ## Roadmap
 
+Ruleset milestones carry the machine milestones of
+[docs/lisp-machine.md](docs/lisp-machine.md).
+
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
-| M0 | toolchain repo rule + `lean_library`/`lean_test` + hello-world e2e | `bazel test //e2e/hello` green; rebuild is a no-op; olean path-independence measured |
-| M1 | Mathlib prebuilt oleans, whole-cache fetch first | `import Mathlib.Data.Finset.Basic` type-checks with zero Mathlib compilation; offline after first fetch |
-| M2 | `lake-manifest.json` → per-dep repos; fine-grained source builds for non-Mathlib deps | a project with two git deps builds with per-module actions |
-| M3 | Import-closure subset fetch; own fetcher (no `lake` binary, no `cache` exe) | fetch size proportional to imports; hashmap computed in-rule |
-| M4 | `forbid_sorry` + `lean_axiom_test` gates, with negative tests | each gate fails on a planted `sorry`/`native_decide` |
-| M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, publish PR | module installable via `bazel_dep(name = "rules_lean")` from the BCR |
+| M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
+| M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch |
+| M2 | `lake-manifest.json` to per-dep repositories; `lean_binary` | `bazel run //lisp:lisp -- prog.lisp` prints the machine result |
+| M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
+| M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
+| M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, pull request | `bazel_dep(name = "rules_lean")` installs from the BCR |
 
 ## Layout
 
 ```
 MODULE.bazel
 lean/            defs.bzl, extensions.bzl, toolchain.bzl
-lean/private/    toolchain repo rule, versions db, compile actions
-lake/            manifest parsing, dep repos, dev helpers
+lean/private/    toolchain repository rules, versions table, compile rules
+lake/            manifest parsing, dep repositories, dev helpers
 mathlib/         cache client, ltar fetch, target generation
+lisp/            the Lisp machine, the long-term test suite
 e2e/             one bzlmod module per scenario, run by BCR presubmit
-examples/        hello, mathlib, multi-module
-tools/           release + registry helpers
+docs/            design documents
+tools/           release and registry helpers
 ```
 
 ## Publishing
@@ -316,12 +372,11 @@ community standard for that language. Publish 0.1.0 after M1 to hold the name.
 
 ## Open questions
 
-1. Persist `lakefile.toml`-only projects (no manifest) as a first-class input, or
-   require a committed `lake-manifest.json` like every other Bazel ecosystem?
+1. Require a committed `lake-manifest.json`, or also accept a `lakefile.toml`-only
+   project as a first-class input?
 2. Toolchain distribution: fetch Lean release tarballs per user, or publish
-   `lean_toolchains_*` repos to the BCR (rules_rust style) so versions are shared?
-3. Ship our own `cache`/`leantar` binary as a ruleset toolchain, or depend on
+   `lean_toolchains_*` repositories to the BCR, rules_rust style?
+3. Ship our own `cache`/`leantar` binary as a ruleset toolchain, or depend on the
    upstream `leantar` release binaries?
 4. Does Bazel fetch the repository of every registered platform toolchain, or
-   only the host platform? M0 measures the volume. If it fetches all, add a
-   `host_only` option or split the toolchain extension per platform.
+   only the host platform? M0 measured one platform so far.
