@@ -28,6 +28,7 @@ piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
 | --- | --- | --- |
 | Unit | one rule, one feature, seconds | `e2e/`, one bzlmod module per case |
 | Shape | a project the size of a real one, in the repository | `examples/rtl`, the RTL demo |
+| Math | theorems, with the proof technique and the axiom footprint of each | `proofs/` |
 | Integration | a Lean project that grows with the ruleset | `lisp/`, the Lisp machine |
 | Field | projects outside this repository that use the ruleset | not in this repository |
 
@@ -47,6 +48,21 @@ default build gates it. It has 10 files:
 | A project test | `//examples/rtl:rtl_test`, 9 checks |
 
 A demo with Mathlib, executables, and a test driver lands with M1.
+
+`proofs/` is the mathematics tier. Lean core has no `Nat.Prime`, no `Finset`,
+and no `norm_num`, so the tier builds its own number theory and keeps the
+contrast visible. Each theorem states a technique, and each one reports its
+axioms:
+
+| Theorem | Technique | Axioms (`#print axioms`) |
+| --- | --- | --- |
+| `no_surjection_nat_bool` | Cantor diagonalization | `propext` |
+| `no_sqrt2` | infinite descent, parity | `propext`, `Quot.sound` |
+| `exists_prime_gt` | Euclid, minimal divisor | `propext`, `Classical.choice`, `Quot.sound` |
+| `sumOdds_eq` | induction | `propext`, `Quot.sound` |
+
+Eleven checks run the computational content. See
+[docs/proofs.md](docs/proofs.md).
 
 ## Requirements from real projects
 
@@ -385,7 +401,7 @@ Ruleset milestones carry the machine milestones of
 | --- | --- | --- |
 | M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | done: `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
 | M0b | import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
-| M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch |
+| M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
 | M2 | `lake-manifest.json` to per-dep repositories; `lean_binary` | `bazel run //lisp:lisp -- prog.lisp` prints the machine result |
 | M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
 | M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |

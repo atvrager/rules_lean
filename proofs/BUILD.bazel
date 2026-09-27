@@ -1,0 +1,46 @@
+load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# One target per theorem file. These proofs use Lean core only: Mathlib has the
+# lemmas, and M1 replaces these files with Mathlib versions.
+lean_library(
+    name = "basic",
+    srcs = ["Proofs/Basic.lean"],
+)
+
+lean_library(
+    name = "diagonal",
+    srcs = ["Proofs/Diagonal.lean"],
+)
+
+lean_library(
+    name = "primes",
+    srcs = ["Proofs/Primes.lean"],
+    deps = [":basic"],
+)
+
+lean_library(
+    name = "sqrt2",
+    srcs = ["Proofs/Sqrt2.lean"],
+    deps = [":basic"],
+)
+
+lean_library(
+    name = "sums",
+    srcs = ["Proofs/Sums.lean"],
+)
+
+lean_test(
+    name = "proofs_test",
+    size = "small",
+    srcs = ["Proofs/Test/Checks.lean"],
+    entry = "Proofs/Test/Checks.lean",
+    deps = [
+        ":basic",
+        ":diagonal",
+        ":primes",
+        ":sqrt2",
+        ":sums",
+    ],
+)
