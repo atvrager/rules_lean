@@ -4,6 +4,7 @@ LeanToolchainInfo = provider(
     doc = "A Lean compiler installation.",
     fields = {
         "leanc": "File: the native linker driver.",
+        "link_inputs": "depset[File]: files the linker reads, for `lean_binary`.",
         "lean": "File: the Lean binary.",
         "stdlib": "depset[File]: prebuilt oleans of the standard library.",
         "version": "str: the Lean version, for example \"4.34.1\".",
@@ -18,6 +19,7 @@ def _lean_toolchain_impl(ctx):
         version = ctx.attr.version,
         lean = ctx.file.lean,
         leanc = ctx.file.leanc,
+        link_inputs = ctx.attr.link[DefaultInfo].files,
         stdlib = ctx.attr.stdlib[DefaultInfo].files,
     )
 
@@ -39,6 +41,10 @@ lean_toolchain = rule(
             allow_single_file = True,
             mandatory = True,
             doc = "The `leanc` binary, which links native executables.",
+        ),
+        "link": attr.label(
+            mandatory = True,
+            doc = "Target that provides the files the linker reads.",
         ),
         "stdlib": attr.label(
             mandatory = True,

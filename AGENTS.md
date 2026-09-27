@@ -43,6 +43,14 @@ declare them, so Lean reported missing executable code."
   `d1/Lisp/Expr.olean` and `d2/Lisp/Eval.olean`, `LEAN_PATH=d1:d2` fails on
   `import Lisp.Eval`. The oleans of a package therefore go into one directory,
   the output directory of the package.
+- A native program needs the C code of *every* module it imports: the generated
+  C calls the initializer of each import, and the linker fails on
+  `undefined symbol: initialize_<Module>` without it. `lean_binary` therefore runs
+  one code-generation action per module in the dependency closure.
+- `leanc` is clang with baked-in flags. It does not accept a `.lean` file:
+  `lean -c X.c -o X.olean src.lean` first, then `leanc -o exe X.c ...`. The link
+  is static against the Lean runtime, so a 4.3 MB binary needs no Lean shared
+  library at run time.
 - Network access belongs in repository rules. Actions stay hermetic.
 
 ## Commands

@@ -28,6 +28,8 @@ LeanLibraryInfo = provider(
     doc = "Oleans of one `lean_library`, and the directories that hold them.",
     fields = {
         "olean_dirs": "depset[str]: `LEAN_PATH` entries for actions, transitive.",
+        "module_sources": "depset[tuple[str, str, File]]: module path, module name, " +
+                          "and source file, transitive.",
         "oleans": "depset[File]: oleans, transitive.",
         "runfiles_olean_dirs": "depset[str]: `LEAN_PATH` entries for runfiles, transitive.",
     },
@@ -147,6 +149,10 @@ exec "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
         oleans.append(out)
 
     return struct(
+        module_sources = [
+            (_module_rel(ctx, src), _module_rel(ctx, src).replace("/", "."), src)
+            for src in srcs
+        ],
         olean_dir = olean_dir,
         oleans = depset(direct = oleans, transitive = [dep_oleans]),
         runfiles_olean_dir = runfiles_olean_dir,
@@ -162,6 +168,10 @@ def _lean_library_impl(ctx):
             olean_dirs = depset(
                 direct = [result.olean_dir],
                 transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
+            ),
+            module_sources = depset(
+                direct = result.module_sources,
+                transitive = [_transitive(ctx.attr.deps, "module_sources")],
             ),
             oleans = result.oleans,
             runfiles_olean_dirs = depset(
@@ -234,7 +244,7 @@ exec "{lean}" -R "$root" --run "$LEAN_SRC"
     )
 
     runfiles = ctx.runfiles(
-        files = ctx.files.srcs + [tc.lean, entry] +
+        files = ctx.files.data + ctx.files.srcs + [tc.lean, entry] +
                 tc.stdlib.to_list() +
                 [file for info in dep_infos for file in info.oleans.to_list()],
     )
@@ -244,6 +254,10 @@ exec "{lean}" -R "$root" --run "$LEAN_SRC"
 lean_test = rule(
     implementation = _lean_test_impl,
     attrs = {
+        "data": attr.label_list(
+            allow_files = True,
+            doc = "Files the test reads at run time.",
+        ),
         "deps": attr.label_list(
             providers = [LeanLibraryInfo],
             doc = "Lean libraries that the sources import.",
@@ -265,4 +279,117 @@ lean_test = rule(
     test = True,
     toolchains = [TOOLCHAIN_TYPE],
     doc = "Compiles Lean sources and runs one of them with the interpreter.",
+)
+
+def _lean_binary_impl(ctx):
+    tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
+
+    # Every module of the dependency closure gets its own code-generation
+    # action. The closure is the dep set, not the import graph, because the
+    # rules do not read import lines yet (see M0b in the README).
+    modules = {}
+    for src in ctx.files.srcs:
+        rel = _module_rel(ctx, src)
+        modules[rel] = (rel, src)
+    for info in [dep[LeanLibraryInfo] for dep in ctx.attr.deps]:
+        for rel, name, file in info.module_sources.to_list():
+            modules[name] = (rel, file)
+
+    entry = modules.get(ctx.attr.main)
+    if entry == None:
+        fail("%s: no module named '%s'. Known modules: %s" % (
+            ctx.label,
+            ctx.attr.main,
+            ", ".join(sorted(modules.keys())),
+        ))
+
+    # Lean searches LEAN_PATH in order and replaces its built-in path, so the
+    # standard library must be an explicit entry.
+    lean_path = ":".join(
+        _transitive(ctx.attr.deps, "olean_dirs").to_list() + [_stdlib_dir(tc, "path")],
+    )
+
+    sources = []
+    for rel, src in modules.values():
+        olean = ctx.actions.declare_file("%s.oleans/%s.olean" % (ctx.label.name, rel))
+        cfile = ctx.actions.declare_file("%s.c/%s.c" % (ctx.label.name, rel))
+
+        # A native program needs the C code of every module it imports: the
+        # generated C calls the initializer of each import.
+        ctx.actions.run_shell(
+            command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
+exec "{lean}" -o "$LEAN_OUT" -c "$LEAN_C" -R "$root" "$LEAN_SRC" "$@"
+""".format(lean = tc.lean.path),
+            arguments = ctx.attr.extra_flags,
+            inputs = depset(
+                direct = [src],
+                transitive = [tc.stdlib, _transitive(ctx.attr.deps, "oleans")],
+            ),
+            outputs = [olean, cfile],
+            tools = [tc.lean],
+            env = {
+                "LEAN_C": cfile.path,
+                "LEAN_MODREL": rel,
+                "LEAN_OUT": olean.path,
+                "LEAN_PATH": lean_path,
+                "LEAN_SRC": src.path,
+            },
+            mnemonic = "LeanCCode",
+            progress_message = "Lean code %s" % rel,
+        )
+        sources.append(cfile)
+
+    executable = ctx.actions.declare_file(ctx.label.name)
+    args = ctx.actions.args()
+    args.add("-o", executable.path)
+    args.add_all(sources)
+    args.add_all(ctx.attr.extra_link_flags)
+
+    ctx.actions.run(
+        executable = tc.leanc,
+        arguments = [args],
+        inputs = depset(sources, transitive = [tc.link_inputs]),
+        outputs = [executable],
+        tools = [tc.leanc],
+        mnemonic = "LeanLink",
+        progress_message = "Lean link %{label}",
+    )
+
+    # The link is static against the Lean runtime, so the runfiles hold the
+    # data files only.
+    runfiles = ctx.runfiles(files = ctx.files.data)
+
+    return [DefaultInfo(executable = executable, runfiles = runfiles)]
+
+lean_binary = rule(
+    implementation = _lean_binary_impl,
+    attrs = {
+        "data": attr.label_list(
+            allow_files = True,
+            doc = "Files the program reads at run time.",
+        ),
+        "deps": attr.label_list(
+            providers = [LeanLibraryInfo],
+            doc = "Lean libraries that the program imports.",
+        ),
+        "extra_flags": attr.string_list(
+            doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",
+        ),
+        "extra_link_flags": attr.string_list(
+            doc = "Extra flags for `leanc`, for example a `-l` flag.",
+        ),
+        "main": attr.string(
+            mandatory = True,
+            doc = "The module that holds `main`, as Lake's `root :=` names it. " +
+                  "It must be one of `srcs` or of the modules of `deps`.",
+        ),
+        "srcs": attr.label_list(
+            allow_files = [".lean"],
+            doc = "Extra modules of the program. Keep them entry points: a " +
+                  "module that others of `srcs` import belongs in a lean_library.",
+        ),
+    },
+    executable = True,
+    toolchains = [TOOLCHAIN_TYPE],
+    doc = "Links a native executable from Lean sources.",
 )

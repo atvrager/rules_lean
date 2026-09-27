@@ -46,6 +46,8 @@ default build gates it. It has 10 files:
 | Warnings as errors | `extra_flags = ["-DwarningAsError=true"]` on one library |
 | A root module that imports everything | `Rtl.lean` |
 | A project test | `//examples/rtl:rtl_test`, 9 checks |
+| A native command line tool | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` |
+| A runfiles data file | `Spec.txt`, read by the tool at run time |
 
 A demo with Mathlib, executables, and a test driver lands with M1.
 
@@ -141,7 +143,7 @@ lean_axiom_test(
 | `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`; one action per source |
 | `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
 | `lean_prebuilt_library` | an importable olean tree | planned, M1 |
-| `lean_binary` | a native executable | planned, M2; `main` names the main module |
+| `lean_binary` | a native executable | `main` names the module with `main`, as Lake's `root :=`; `data` reaches runfiles |
 | `lean_axiom_test` | a test | planned, M4 |
 | `lean_toolchain` | a toolchain | write it in a BUILD file for a local compiler |
 
@@ -189,7 +191,10 @@ lake-manifest.json┤                      (lockfile: workspace deps, pinned rev
         │   extracted to per-module targets                 │
         └──────────────────────────────────────────────────┘
    //P/A.lean ─lean─▶ A.olean ─┐
-   //P/B.lean ─lean─▶ B.olean ─┴─▶ lean_test | leanc ─▶ binary | lean_axiom_test
+   //P/B.lean ─lean─▶ B.olean ─┴─▶ lean_test (interpreter) | lean_axiom_test
+
+   lean_binary:  //P/A.lean ─lean -c─▶ A.c ─┐
+                 //P/B.lean ─lean -c─▶ B.c ─┴─leanc─▶ executable
 ```
 
 ### Toolchain
@@ -348,6 +353,24 @@ Measured on the M0 e2e (`e2e/hello`, two tests, three modules):
 | rebuild, no change | 1 action: the test run. Olean actions cached. |
 | edit one leaf module | 3 sandbox actions, 1 test re-run. The unrelated test stayed cached. |
 
+Measured on the native pipeline (`//examples/rtl:rtl_emit`, a four-module
+closure):
+
+| Event | Actions |
+| --- | --- |
+| first build | 4 code-generation actions, 1 link |
+| rebuild, no change | 0 compile actions |
+| comment in a leaf module | 2 actions: the olean and the C of that module. The link hits the cache, because the C is identical. |
+
+`lean_binary` links statically against the Lean runtime: the result is a 4.3 MB
+ELF executable with no Lean library at run time. The link reads 544 MB of
+toolchain inputs (`lib/lean/*.a` 384 MB, `lib/*.a` and `lib/*.so*` 156 MB, the
+bundled clang and glibc).
+
+The closure of a `lean_binary` is the dependency set, not the import graph,
+because the rules do not read import lines yet. A binary over Mathlib would
+generate C for 6000 modules. M0b fixes this.
+
 Measured on the Lisp machine (`//lisp`, seven targets, seven modules, one test):
 
 | Event | Actions |
@@ -402,7 +425,8 @@ Ruleset milestones carry the machine milestones of
 | M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | done: `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
 | M0b | import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
 | M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
-| M2 | `lake-manifest.json` to per-dep repositories; `lean_binary` | `bazel run //lisp:lisp -- prog.lisp` prints the machine result |
+| M2 | `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
+| M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
 | M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
 | M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
 | M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, pull request | `bazel_dep(name = "rules_lean")` installs from the BCR |

@@ -38,11 +38,35 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Everything the native link needs: the driver, the bundled clang with its
+# resource directory, the bundled libc, and the static libraries of the
+# compiler and its runtime.
+filegroup(
+    name = "link",
+    srcs = glob(
+        [
+            "bin/clang",
+            "bin/ld.lld",
+            "bin/leanc",
+            "include/**",
+            "lib/*.a",
+            "lib/*.so*",
+            "lib/clang/**",
+            "lib/glibc/**",
+            "lib/lean/*.a",
+            "lib/lean/*.so*",
+        ],
+        allow_empty = False,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 lean_toolchain(
     name = "lean_toolchain",
     version = "{version}",
     lean = "bin/lean",
     leanc = "bin/leanc",
+    link = ":link",
     stdlib = ":stdlib",
     visibility = ["//visibility:public"],
 )
