@@ -111,9 +111,30 @@ regression names the pile and the file.
 | Stage | Deliverable | Acceptance |
 | --- | --- | --- |
 | 1 | done: fetch, scan, generate, elaborate `tests/elab`; link `tests/compile` | `bazel build @lean_samples//tests:pile_elab @lean_samples//tests:pile_compile` is green: 3126 elab files and 71 native programs, 3197 targets, 7 files excluded with a reason each |
-| 2 | expected-output comparison for `tests/compile`, `tests/ir`, `tests/docparse` | the fail list matches upstream's own list |
+| 2 | the test driver: run an action with the pile directory as its working directory, declare the fixture files of a test as inputs, and compare stdout and stderr against `.out.expected` | the four excluded files build; `tests/compile` and `tests/docparse` compare output; the fail list matches upstream's own list |
 | 3 | `tests/elab_fail`: inverted verdict plus message comparison | a planted wrong message fails the test |
 | 4 | the CI job reports per-pile counts into the run summary | the summary matches the inventory table |
+
+## Stage 2 in detail
+
+Three pieces, in the order they unblock tests.
+
+1. **Fixture inputs.** `lean_library` gains a `data` attribute, which joins the
+   action inputs. The generator declares the sibling paths a test reads:
+   `readDir.lean.dir/` for `readDir.lean`, and the file `parsePrelude.lean`
+   reads. Nothing else changes, because a declared input is a sandbox entry.
+2. **Working directory.** The compile action changes into the directory of the
+   source before it runs `lean`, which is what the upstream driver does
+   (`WORKING_DIRECTORY "${DIR}"`). Two details: the output path becomes
+   absolute, and every `LEAN_PATH` entry does too, because the entries are
+   relative to the execution root. Both are shell work in `_ROOT_SNIPPET`, and
+   both stay out of the action key, so the cache still hits across machines.
+3. **Output comparison.** A rule that runs a step, captures stdout and stderr
+   together, and compares against `<file>.out.expected`. Upstream's comparison
+   is `diff -au --strip-trailing-cr` after three normalizations (metavariable
+   suffixes, reference URLs, measurements). The rule takes the normalizations
+   as a mode, so `tests/elab`, `tests/compile`, and `tests/docparse` share it.
+   `tests/elab_fail` sets the same rule to expect a non-zero exit.
 
 ## Known unknowns
 
