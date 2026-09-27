@@ -112,20 +112,74 @@ lake-manifest.json┤                      (lockfile: ws deps, pinned revs)
 
 ### Toolchain
 
-`lean.toolchain()` accepts a `toolchain_file` label (the root module's
-`lean-toolchain`, in elan format: `leanprover/lean4:v4.29.1`, `...:stable`,
-`...:nightly-2026-01-01`) or an explicit `version`. The version selects a
-per-platform tarball from the `leanprover/lean4` releases. A sha256 in
-`lean/private/known_lean_versions.bzl` verifies the tarball.
+A Lean toolchain is a release tarball from `leanprover/lean4`. A repository rule
+downloads the tarball, verifies a sha256 from `lean/private/known_lean_versions.bzl`,
+and declares it as a Bazel toolchain:
 
-- An unknown version stops the build. The user must then pass `sha256 = {...}`
-  for each platform. The ruleset never downloads an unverified file.
-- The tarball contains prebuilt oleans for `Init`/`Std`/`Lean`/`Lake`. The build
-  never compiles the standard library.
+```
+@lean_toolchains                hub repo, holds the toolchain targets
+  :lean_toolchain_linux_x86_64      -> @lean_toolchain_linux_x86_64
+  :lean_toolchain_darwin_aarch64    -> @lean_toolchain_darwin_aarch64
+```
+
+`register_toolchains("@lean_toolchains//:all")` registers every target. Bazel
+filters them by platform constraint and picks the match for the host. Rules read
+the toolchain through `toolchain_type @rules_lean//lean:toolchain_type`. No rule
+runs `elan`, and no rule reads `~/.elan`.
+
+`lean_toolchain(...)` is also a public rule. Write it in a `BUILD.bazel` file to
+use a Lean binary from another source, for example a patched compiler or a local
+checkout.
+
+#### Where the version lives
+
+Four candidates. All tests ran on Bazel 9.2.0.
+
+| Candidate | Result |
+| --- | --- |
+| `load()` a constant in `MODULE.bazel` | Not possible. Bazel stops with: `` `load` statements may not be used in MODULE.bazel files ``. |
+| `lean.toolchain(version = "4.29.1")` | Works. The version string then exists twice. |
+| Read `//:lean-toolchain` in the extension | Works. A tag label resolves in your module, and a repository rule that the extension instantiates reads the file. The test returned `leanprover/lean4:v4.29.1`. |
+| Download the tarball in a build action | Not possible. An action has no network. |
+
+Decision: the version string lives in `lean-toolchain`. `MODULE.bazel` points at
+that file. The toolchain itself is still a Bazel target, because the repository
+rule that generates it creates the target.
+
+```starlark
+lean.toolchain(toolchain_file = "//:lean-toolchain")   # normal case
+lean.toolchain(version = "4.29.1")                     # no Lake workspace
+```
+
+Two reasons for the file:
+
+1. It is the Lean convention. `elan`, `lake`, and the VS Code extension read
+   `lean-toolchain`. A project on this ruleset stays a normal Lake project.
+2. Mathlib hashes the content of that file into its olean cache key. A second
+   version source would let one project request Lean X and Mathlib oleans for Lean Y.
+
+Guards:
+
+- `toolchain_file` and `version` together must be equal, or the build stops.
+- The file must equal the `lean-toolchain` file inside the pinned Mathlib
+  revision. The Mathlib cache key hashes `lean-toolchain` and `Lean.githash`, so
+  a mismatch yields oleans that the toolchain cannot load.
+
+`elan` stays available for developer commands (`lake update`,
+`lake exe cache get`, editor support). Its state (`ELAN_TOOLCHAIN`,
+`elan override`, the default toolchain) never enters a build. Two developers with
+different elan defaults produce the same Bazel output.
+
+The tarball also supplies the toolchain contents:
+
+- Prebuilt oleans for `Init`/`Std`/`Lean`/`Lake`. The build never compiles the
+  standard library.
 - Layout of v4.29.1, linux x86_64: 2.7 GB total, 2.5 GB of it `lib/lean`. The
   toolchain repo splits into a **driver** (bin, shared libraries) and a
   **stdlib olean tree**. An action and its remote-cache digest then carry only
   the part they use.
+- An unknown version stops the build. The user must then pass `sha256 = {...}`
+  for each platform. The ruleset never downloads an unverified file.
 
 ### Lake
 
@@ -196,7 +250,7 @@ for several modules and lowers the import cost per action. Set
 | # | Decision | Reason |
 | --- | --- | --- |
 | D1 | Hermetic toolchain from release tarballs; no `elan` at build time | The same tarball builds on every machine. `elan` stays a developer tool. |
-| D2 | One version source, `//:lean-toolchain` | Bazel and `lake` cannot disagree. |
+| D2 | The version string lives in `lean-toolchain`; `MODULE.bazel` points at it with a label | `load()` is not allowed in `MODULE.bazel` (test result). A second copy of the version can disagree with the Mathlib cache key and with `lake`. |
 | D3 | `lake-manifest.json` is the only dep source; never evaluate `lakefile.lean` | An evaluator needs a toolchain, and analysis cannot run Lean. A build action must not use the network. |
 | D4 | Mathlib from prebuilt oleans, never from source | A source build of Mathlib needs hours and ~5 GB. |
 | D5 | Import-closure fetch, not whole-cache fetch | Mathlib is ~5 GB. Most users need a fraction of it. |
@@ -268,3 +322,6 @@ community standard for that language. Publish 0.1.0 after M1 to hold the name.
    `lean_toolchains_*` repos to the BCR (rules_rust style) so versions are shared?
 3. Ship our own `cache`/`leantar` binary as a ruleset toolchain, or depend on
    upstream `leantar` release binaries?
+4. Does Bazel fetch the repository of every registered platform toolchain, or
+   only the host platform? M0 measures the volume. If it fetches all, add a
+   `host_only` option or split the toolchain extension per platform.
