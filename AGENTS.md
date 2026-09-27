@@ -53,12 +53,31 @@ declare them, so Lean reported missing executable code."
   library at run time.
 - Network access belongs in repository rules. Actions stay hermetic.
 
+- A native program links statically against the Lean runtime, so a runfiles
+  tree needs the `data` files only.
+- A source of another repository has a `../<repo>/` prefix in its `short_path`.
+  Strip it before the package-directory comparison, or the module name is
+  wrong.
+
 ## Commands
 
-    cd e2e/hello && bazel test //...     # the acceptance test of the ruleset
+    bazel test //...                              # the rules, the demos, the proofs
+    cd e2e/hello    && bazel test //...           # the install path
+    cd e2e/upstream && bazel build @lean_samples//tests:pile_elab
 
-Run that after any change to `lean/`, and report the result. A change to a rule
-is not finished until this test passes.
+Run the first two after any change to `lean/`, and report the result. A change
+to a rule is not finished until both pass.
+
+## Repository layout
+
+    lean/            the rules and the toolchain
+    lisp/            the integration suite
+    proofs/          the mathematics tier
+    examples/rtl     a project-shaped demo
+    examples/scheme  a project in the shape of an interpreter
+    e2e/hello        the install path, and the BCR presubmit module
+    e2e/upstream     the compiler test piles of leanprover/lean4
+    docs/            design documents, one per tier
 
 ## Commits
 

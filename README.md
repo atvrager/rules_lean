@@ -7,8 +7,15 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. M0 works: `cd e2e/hello && bazel test //...` passes. The first
-piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
+Status: pre-0.1.0. M0, M2b, and F0 work. `bazel test //...` passes 4 tests:
+`examples/rtl`, `examples/scheme`, `lisp`, and `proofs`. CI builds the compiler
+test piles of the Lean repository at the tag of the toolchain: 3125 of 3133
+`tests/elab` files, and 71 native programs from `tests/compile`. See
+[docs/upstream-suite.md](docs/upstream-suite.md).
+
+    bazel test //...                                 # the ruleset and the demos
+    cd e2e/hello && bazel test //...                 # the install path
+    cd e2e/upstream && bazel build @lean_samples//tests:pile_elab
 
 ## The problem
 
@@ -26,6 +33,7 @@ piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
 
 | Tier | What it is | Where |
 | --- | --- | --- |
+| Upstream | the compiler test piles of `leanprover/lean4` | `e2e/upstream`, `@lean_samples` |
 | Unit | one rule, one feature, seconds | `e2e/`, one bzlmod module per case |
 | Shape | projects the size of real ones, in the repository | `examples/rtl` and `examples/scheme` |
 | Math | theorems, with the proof technique and the axiom footprint of each | `proofs/` |
@@ -401,6 +409,14 @@ several modules and lowers the import cost per action. Set
 | D7 | bzlmod only; Bazel 8 and 9 | Bazel 9 removed the native cc rules (test result), so `rules_cc` is a hard dependency. |
 | D8 | Module name: path relative to the Bazel package directory | It matches Lake's `srcDir`, and it keeps the olean path equal to the module path. |
 | D9 | Module name `rules_lean` | The name is free on the BCR (test result). `pulseengine/rules_lean` and `tomato-bazel/rules_lean` use it on GitHub. Publish early to hold the name. |
+
+## Continuous integration
+
+| Job | Command | Checks |
+| --- | --- | --- |
+| `ruleset` (Bazel 8 and 9) | `bazel test //...` | the rules, the demos, the proofs |
+| `install` | `cd e2e/hello && bazel test //...` | the path a user takes |
+| `upstream` | `cd e2e/upstream && bazel build @lean_samples//tests:pile_elab @lean_samples//tests:pile_compile` | the compiler piles |
 
 ## Non-goals
 
