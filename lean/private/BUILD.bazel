@@ -1,0 +1,7 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "lean_rules.bzl",
+    "repositories.bzl",
+    "versions.bzl",
+])

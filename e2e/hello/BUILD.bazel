@@ -1,0 +1,34 @@
+load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+
+package(default_visibility = ["//visibility:public"])
+
+lean_library(
+    name = "greeting",
+    srcs = ["Greeting/Shout.lean"],
+)
+
+lean_test(
+    name = "hello_test",
+    srcs = ["Hello.lean"],
+    entry = "Hello.lean",
+    deps = [":greeting"],
+)
+
+# Sources that a rule generates are ordinary srcs.
+genrule(
+    name = "gen_module",
+    outs = ["Generated/FromRule.lean"],
+    cmd = "printf 'def fromRule : Nat := 42\\n' > $@",
+)
+
+lean_library(
+    name = "generated",
+    srcs = [":gen_module"],
+)
+
+lean_test(
+    name = "generated_test",
+    srcs = ["Generated/Check.lean"],
+    entry = "Generated/Check.lean",
+    deps = [":generated"],
+)

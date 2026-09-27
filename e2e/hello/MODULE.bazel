@@ -1,0 +1,9 @@
+module(name = "e2e_hello", version = "0.0.0")
+
+bazel_dep(name = "rules_lean", version = "0.0.0")
+
+lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
+lean.toolchain(toolchain_file = "//:lean-toolchain")
+use_repo(lean, "lean_toolchains")
+
+register_toolchains("@lean_toolchains//:all")
