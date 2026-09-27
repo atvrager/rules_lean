@@ -37,7 +37,12 @@ declare them, so Lean reported missing executable code."
 - `LEAN_PATH` replaces the built-in search path. Always add the toolchain
   standard library directory explicitly.
 - The toolchain loader opens `.olean`, `.olean.private`, `.olean.server`, and
-  `.ir`. All four must be action inputs.
+  `.ir`, plus `.ir.sig`. All of them must be action inputs.
+- Lean resolves an import by the *first* `LEAN_PATH` entry that holds the module's
+  top-level directory, and it does not look at later entries. Test: with
+  `d1/Lisp/Expr.olean` and `d2/Lisp/Eval.olean`, `LEAN_PATH=d1:d2` fails on
+  `import Lisp.Eval`. The oleans of a package therefore go into one directory,
+  the output directory of the package.
 - Network access belongs in repository rules. Actions stay hermetic.
 
 ## Commands

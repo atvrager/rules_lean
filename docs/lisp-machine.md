@@ -30,22 +30,34 @@ Stack arithmetic alone would prove nothing.
 
 ## Content
 
+What exists at F0:
+
 ```
 lisp/
-  BUILD.bazel
-  Lisp/Sexp.lean          syntax, symbols, well-formedness
-  Lisp/Env.lean           environments as finite maps (Mathlib Finsupp)
-  Lisp/Eval.lean          eval over an environment, closures as a structure
-  Lisp/Free.lean          free variables, closed terms
-  Lisp/Subst.lean         capture-avoiding substitution, substitution lemmas
-  Lisp/Compile.lean       compile to VM words, label generation
-  VM/Word.lean            push, add, sub, load, store, jmp, jz, call, ret
-  VM/Machine.lean         state, step, run
-  VM/Cost.lean            instruction count, cost of a compiled expression
-  Lisp/Correctness.lean   run (compile e) ρ = eval e ρ
-  Lisp/Test/Eval.lean     executable checks, run by `lean_test`
-  Lisp/Tools/Gen.lean     emits a program as Lean source (ruleset: generated srcs)
+  BUILD.bazel             one target per module
+  VM/Word.lean            Word, Code, Op
+  Lisp/Expr.lean          Expr, freeVars
+  Lisp/Eval.lean          Value, Env, eval (fuel-bounded)
+  VM/Machine.lean         Value, Env, State, run (fuel-bounded)
+  Lisp/Compile.lean       compile : Expr -> Code
+  Lisp.lean               root module, imports the rest
+  Lisp/Test/Eval.lean     10 checks: eval and run agree on every sample
 ```
+
+What F1 and later add:
+
+```
+  Lisp/Env.lean           environments as finite maps (Mathlib Finsupp)
+  Lisp/Subst.lean         capture-avoiding substitution, substitution lemmas
+  Lisp/Correctness.lean   run (compile e) ρ = eval e ρ
+  Lisp/Tools/Gen.lean     emits a program as Lean source (ruleset: generated srcs)
+  VM/Flat.lean            flat bytecode: jmp, jz, pc
+  VM/Cost.lean            instruction count, cost of a compiled expression
+```
+
+F0 needed one target per module, because the rule does not read `import` lines
+yet. That is the M0b milestone, and this machine is its test: when M0b lands,
+the machine collapses to one target and keeps its cache behaviour.
 
 ### Where Mathlib does real work
 
@@ -62,7 +74,9 @@ variables lie in the environment domain:
     theorem compile_correct (e : Expr) (ρ : Env) (h : e.freeVars ⊆ ρ.domain) :
       (run (compile e) ⟨ρ, []⟩).map (fun s => s.stack) = some (eval e ρ :: [])
 
-The exact statement is settled at F1, when Mathlib links for the first time.
+The exact statement is settled at F1, when Mathlib links for the first time. F0
+runs both sides on ten samples and compares the results, which is evidence but
+not a proof.
 
 ## Test tiers inside the machine
 
@@ -81,7 +95,7 @@ Each milestone pairs a ruleset feature with a piece of the machine.
 
 | # | Ruleset feature | Machine change | Acceptance |
 | --- | --- | --- | --- |
-| F0 | `lean_library`, `lean_test`, toolchain | `Sexp`, `Eval`, `VM/Word`, `VM/Machine`, `Test/Eval` | `bazel test //lisp/...` passes; edit `Sexp.lean` and observe that only its importers rebuild |
+| F0 | `lean_library`, `lean_test`, toolchain | `Expr`, `Eval`, `VM/Word`, `VM/Machine`, `Compile`, `Test/Eval` | done: `bazel test //lisp/...` passes 10 checks; a comment in a leaf module costs one action, a definition costs six |
 | F1 | Mathlib oleans from the cache | `Env` on `Finsupp`, `Subst`, `Correctness` for `let` and `if` | the proof builds with zero Mathlib source builds |
 | F2 | generated sources, `lean_binary` | `Tools/Gen` emits a program; `lisp` links natively | `bazel run //lisp:lisp -- prog.lisp` prints the machine result; `data` files reach runfiles |
 | F3 | import-closure fetch | the proof imports few Mathlib modules | measured fetch size follows the imports, not all of Mathlib |

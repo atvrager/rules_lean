@@ -7,7 +7,8 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. M0 works: `cd e2e/hello && bazel test //...` passes.
+Status: pre-0.1.0. M0 works: `cd e2e/hello && bazel test //...` passes. The first
+piece of the Lisp machine works: `bazel test //lisp/...` passes 10 checks.
 
 ## The problem
 
@@ -117,6 +118,30 @@ lean_axiom_test(
 The module name of a source is its path relative to the Bazel package
 directory, as in Lake's `srcDir`. `lean/Foo.lean` in package `//lean` is
 module `Foo`.
+
+### Oleans and `LEAN_PATH`
+
+Lean looks up an imported module `A.B` at `<LEAN_PATH entry>/A/B.olean`, and it
+takes the *first* entry that holds the top-level directory `A`. It does not
+continue to later entries. Test: with `d1/Lisp/Expr.olean` and
+`d2/Lisp/Eval.olean`, `LEAN_PATH=d1:d2` fails on `import Lisp.Eval`, even though
+`d2` holds the file.
+
+The oleans of a package therefore land in one directory, the output directory of
+the package, and that directory is the `LEAN_PATH` entry. Each file still comes
+from its own action. An action declares the oleans it reads, so the directory
+holds exactly the declared files.
+
+### Import graph
+
+`deps` gives the dep edges. The rule does not read `import` lines yet, so a
+target that holds several modules cannot order them itself. Two ways to work
+today: one target per module, or one target per dependency layer.
+
+Reading the import graph needs a file read at analysis time. A Bazel rule cannot
+read a source file (`ctx.read` does not exist on Bazel 9.2.0, test result), so
+the scan belongs in a module extension or a repository rule. It is on the
+roadmap, and the Lisp machine is its test.
 
 ## Architecture
 
@@ -293,6 +318,14 @@ Measured on the M0 e2e (`e2e/hello`, two tests, three modules):
 | rebuild, no change | 1 action: the test run. Olean actions cached. |
 | edit one leaf module | 3 sandbox actions, 1 test re-run. The unrelated test stayed cached. |
 
+Measured on the Lisp machine (`//lisp`, seven targets, seven modules, one test):
+
+| Event | Actions |
+| --- | --- |
+| rebuild, no change | 0 actions. The test result is cached. |
+| add a comment to a leaf module | 1 action. The olean is byte-identical, so Bazel skips the importers. |
+| add a definition to a leaf module | 6 sandbox actions: the module, its four importers, and the test. |
+
 A later option: one persistent worker holds the imported Mathlib environment for
 several modules and lowers the import cost per action. Set
 `--worker_max_instances` to the fan-out. Not in v0.
@@ -336,7 +369,8 @@ Ruleset milestones carry the machine milestones of
 
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
-| M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
+| M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | done: `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
+| M0b | import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
 | M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch |
 | M2 | `lake-manifest.json` to per-dep repositories; `lean_binary` | `bazel run //lisp:lisp -- prog.lisp` prints the machine result |
 | M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
@@ -380,3 +414,7 @@ community standard for that language. Publish 0.1.0 after M1 to hold the name.
    upstream `leantar` release binaries?
 4. Does Bazel fetch the repository of every registered platform toolchain, or
    only the host platform? M0 measured one platform so far.
+5. Import graph: read `import` lines in a module extension that watches the
+   sources, and pass the edges as a generated `.bzl` file that a BUILD file
+   loads. The alternative is a source scan inside each rule, which Bazel does
+   not allow.
