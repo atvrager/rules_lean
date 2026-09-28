@@ -1,0 +1,20 @@
+load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+
+package(default_visibility = ["//visibility:public"])
+
+lean_library(
+    name = "lake_app",
+    srcs = ["App.lean"],
+    deps = [
+        "@Cli",
+        "@Qq",
+    ],
+)
+
+lean_test(
+    name = "lake_manifest_test",
+    size = "small",
+    srcs = ["Test.lean"],
+    entry = "Test.lean",
+    deps = [":lake_app"],
+)

@@ -448,7 +448,7 @@ Ruleset milestones carry the machine milestones of
 | M0 | done: toolchain repository rule, `lean_library`, `lean_test`, hello e2e | `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
 | M0b | done: import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
 | M1 | done: Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
-| M2 | `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
+| M2 | done: `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
 | M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
 | M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |

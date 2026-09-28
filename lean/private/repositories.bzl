@@ -165,11 +165,11 @@ def _parse_imports(text):
         line = line.strip()
         if "--" in line:
             line = line.split("--")[0].strip()
-        if not line.startswith("import"):
-            continue
         words = [w for w in line.replace("\t", " ").split(" ") if w]
-        if words and words[0] == "import":
-            modules += words[1:]
+        if "import" in words:
+            idx = words.index("import")
+            if all([w in ["public", "meta", "scoped", "open", "all"] for w in words[:idx]]):
+                modules += words[idx + 1:]
     return modules
 
 def _lean_imports_repo_impl(rctx):

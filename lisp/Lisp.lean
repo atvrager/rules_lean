@@ -4,6 +4,9 @@ import Lisp.Compile
 import Lisp.Env
 import Lisp.Subst
 import Lisp.Correctness
+import Lisp.Generated
+import Lisp.Parser
+import Lisp.Tools.Gen
 import VM.Word
 import VM.Machine
 

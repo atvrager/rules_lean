@@ -28,9 +28,10 @@ load("//lean:toolchain.bzl", "TOOLCHAIN_TYPE")
 LeanLibraryInfo = provider(
     doc = "Oleans of one `lean_library`, and the directories that hold them.",
     fields = {
-        "olean_dirs": "depset[str]: `LEAN_PATH` entries for actions, transitive.",
+        "module_imports": "depset[tuple[str, tuple[str, ...]]]: module name to imports, transitive.",
         "module_sources": "depset[tuple[str, str, File]]: module path, module name, " +
                           "and source file, transitive.",
+        "olean_dirs": "depset[str]: `LEAN_PATH` entries for actions, transitive.",
         "oleans": "depset[File]: oleans, transitive.",
         "runfiles_olean_dirs": "depset[str]: `LEAN_PATH` entries for runfiles, transitive.",
     },
@@ -114,7 +115,7 @@ def _stdlib_dir(tc, attribute):
     return _dir_of(getattr(tc.lean, attribute), _LEAN_BIN) + _STDLIB_DIR
 
 def _transitive(deps, field):
-    return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps])
+    return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps if hasattr(dep[LeanLibraryInfo], field)])
 
 def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
     """Compile one action per source. Returns the oleans and their directory."""
@@ -129,7 +130,11 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
         rel = _module_rel(ctx, src)
         mod = rel.replace("/", ".")
         out = ctx.actions.declare_file("%s%s" % (rel, _OLEAN_SUFFIX))
-        oleans_by_mod[mod] = out
+        out_server = ctx.actions.declare_file("%s%s.server" % (rel, _OLEAN_SUFFIX))
+        out_private = ctx.actions.declare_file("%s%s.private" % (rel, _OLEAN_SUFFIX))
+        out_ir = ctx.actions.declare_file("%s.ir" % rel)
+        out_ir_sig = ctx.actions.declare_file("%s.ir.sig" % rel)
+        oleans_by_mod[mod] = [out, out_server, out_private, out_ir, out_ir_sig]
         src_by_mod[mod] = src
         rel_by_mod[mod] = rel
 
@@ -152,7 +157,9 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
     env.update(extra_env)
 
     pkg = ctx.label.package
-    pkg_imports = IMPORTS.get(pkg, {})
+    pkg_imports = dict(IMPORTS.get(pkg, {}))
+    if hasattr(ctx.attr, "internal_imports") and ctx.attr.internal_imports:
+        pkg_imports.update(ctx.attr.internal_imports)
 
     # Compute direct internal dependencies (modules in the same target)
     direct_internal = {}
@@ -182,30 +189,55 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
 
     oleans = []
     for mod, src in src_by_mod.items():
-        out = oleans_by_mod[mod]
+        out_files = oleans_by_mod[mod]
+        out = out_files[0]
+        out_ir = out_files[3]
+        out_ir_sig = out_files[4]
         module_rel = rel_by_mod[mod]
-        internal_dep_oleans = [
-            oleans_by_mod[dep_mod] for dep_mod in transitive_internal[mod]
-        ]
+        internal_dep_oleans = []
+        for dep_mod in transitive_internal[mod]:
+            internal_dep_oleans.extend(oleans_by_mod[dep_mod])
 
         ctx.actions.run_shell(
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
-exec "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
+"{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
+touch "$LEAN_OUT.server" "$LEAN_OUT.private"
+if [ ! -f "$LEAN_OUT_IR" ]; then
+    empty_tmp="$(mktemp -d)/e"
+    echo "module" | "{lean}" -R "$root" -o "$empty_tmp.olean" --stdin
+    mv "$empty_tmp.ir" "$LEAN_OUT_IR"
+    mv "$empty_tmp.ir.sig" "$LEAN_OUT_IR_SIG"
+    rm -rf "$(dirname "$empty_tmp")"
+fi
 """.format(lean = tc.lean.path),
             arguments = extra_flags,
             inputs = depset(
                 direct = [src] + internal_dep_oleans,
                 transitive = [tc.stdlib, dep_oleans],
             ),
-            outputs = [out],
+            outputs = out_files,
             tools = [tc.lean],
-            env = dict(env, LEAN_OUT = out.path, LEAN_MODREL = module_rel, LEAN_SRC = src.path),
+            env = dict(
+                env,
+                LEAN_OUT = out.path,
+                LEAN_OUT_IR = out_ir.path,
+                LEAN_OUT_IR_SIG = out_ir_sig.path,
+                LEAN_MODREL = module_rel,
+                LEAN_SRC = src.path,
+            ),
             mnemonic = "LeanOlean",
             progress_message = "Lean %s" % module_rel,
         )
-        oleans.append(out)
+        oleans.extend(out_files)
 
     return struct(
+        module_imports = [
+            (
+                _module_rel(ctx, src).replace("/", "."),
+                tuple(pkg_imports.get(_module_rel(ctx, src).replace("/", "."), [])),
+            )
+            for src in srcs
+        ],
         module_sources = [
             (_module_rel(ctx, src), _module_rel(ctx, src).replace("/", "."), src)
             for src in srcs
@@ -222,13 +254,17 @@ def _lean_library_impl(ctx):
     return [
         DefaultInfo(files = result.oleans),
         LeanLibraryInfo(
-            olean_dirs = depset(
-                direct = [result.olean_dir],
-                transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
+            module_imports = depset(
+                direct = result.module_imports,
+                transitive = [_transitive(ctx.attr.deps, "module_imports")],
             ),
             module_sources = depset(
                 direct = result.module_sources,
                 transitive = [_transitive(ctx.attr.deps, "module_sources")],
+            ),
+            olean_dirs = depset(
+                direct = [result.olean_dir],
+                transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
             ),
             oleans = result.oleans,
             runfiles_olean_dirs = depset(
@@ -251,6 +287,9 @@ lean_library = rule(
         ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",
+        ),
+        "internal_imports": attr.string_list_dict(
+            doc = "Internal import graph edges between modules in this library.",
         ),
         "srcs": attr.label_list(
             allow_files = [".lean"],
@@ -293,6 +332,9 @@ def _lean_prebuilt_library_impl(ctx):
     return [
         DefaultInfo(files = depset(ctx.files.srcs)),
         LeanLibraryInfo(
+            module_imports = depset(
+                transitive = [_transitive(ctx.attr.deps, "module_imports")],
+            ),
             olean_dirs = depset(
                 direct = direct_olean_dirs,
                 transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
@@ -441,6 +483,14 @@ def _lean_binary_impl(ctx):
     for pkg_mods in IMPORTS.values():
         for mod_name, imps in pkg_mods.items():
             all_imports[mod_name] = imps
+    for info in [dep[LeanLibraryInfo] for dep in ctx.attr.deps]:
+        if hasattr(info, "module_imports"):
+            for mod_name, imps in info.module_imports.to_list():
+                if mod_name not in all_imports:
+                    all_imports[mod_name] = list(imps)
+    if hasattr(ctx.attr, "internal_imports") and ctx.attr.internal_imports:
+        for mod_name, imps in ctx.attr.internal_imports.items():
+            all_imports[mod_name] = list(imps)
 
     needed = {}
     queue = [main_mod]
@@ -536,6 +586,10 @@ lean_binary = rule(
         ),
         "extra_link_flags": attr.string_list(
             doc = "Extra flags for `leanc`, for example a `-l` flag.",
+        ),
+        "internal_imports": attr.string_list_dict(
+            default = {},
+            doc = "Explicit internal module import dependencies (e.g. for generated sources or main entry points).",
         ),
         "main": attr.string(
             mandatory = True,

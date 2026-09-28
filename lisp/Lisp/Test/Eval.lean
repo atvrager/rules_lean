@@ -1,5 +1,6 @@
 import Lisp.Compile
 import Lisp.Eval
+import Lisp.Generated
 import VM.Machine
 
 open Lisp VM
@@ -40,6 +41,7 @@ def samples : List (String × Expr) := [
   ("higher-order",
     .app (.app (.lam "f" (.app (.var "f") (.lit 3)))
       (.lam "z" (.op .mul (.var "z") (.var "z")))) (.lit 0)),
+  ("generated-prog", Lisp.Generated.sample),
 ]
 
 def main : IO Unit := do
