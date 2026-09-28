@@ -40,19 +40,21 @@ jobs:
   # The path a user takes: a module that depends on rules_lean and registers a
   # toolchain.
   install:
-    name: Install path
+    name: Install path (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ["hello", "lake_manifest"]
     steps:
       - uses: actions/checkout@v5
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-install
+          disk-cache: ${{ github.workflow }}-install-${{ matrix.module }}
           repository-cache: true
-      - name: Test the hello module
-        run: cd e2e/hello && bazel test //...
-      - name: Test the lake_manifest module
-        run: cd e2e/lake_manifest && bazel test //...
+      - name: Test
+        run: cd e2e/${{ matrix.module }} && bazel test //...
 
   # The compiler test suite of the Lean repository, at the tag of the toolchain.
   # This is the claim for the BCR: the ruleset builds what upstream builds.

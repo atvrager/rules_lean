@@ -221,12 +221,18 @@ def _lean_imports_repo_impl(rctx):
                         content = rctx.read(entry)
                         imports_by_pkg[curr_pkg][module_name] = _parse_imports(content)
 
+    header = ""
+    if rctx.attr.root_module_name:
+        header = "# Root module: " + rctx.attr.root_module_name + "\n"
     rctx.file("BUILD.bazel", "exports_files(['imports.bzl'])\n")
-    rctx.file("imports.bzl", "IMPORTS = " + repr(imports_by_pkg) + "\n")
+    rctx.file("imports.bzl", header + "IMPORTS = " + repr(imports_by_pkg) + "\n")
 
 _lean_imports_repo = repository_rule(
     implementation = _lean_imports_repo_impl,
     attrs = {
+        "root_module_name": attr.string(
+            doc = "Name of the root module being scanned.",
+        ),
         "roots": attr.label_list(
             mandatory = True,
             doc = "Labels to MODULE.bazel files of modules to scan for Lean sources.",
@@ -235,5 +241,5 @@ _lean_imports_repo = repository_rule(
     doc = "Scans Lean source files for import lines and writes imports.bzl.",
 )
 
-def lean_imports_repo(name, roots):
-    _lean_imports_repo(name = name, roots = roots)
+def lean_imports_repo(name, roots, root_module_name = ""):
+    _lean_imports_repo(name = name, roots = roots, root_module_name = root_module_name)

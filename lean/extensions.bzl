@@ -128,10 +128,17 @@ def _lean_impl(mctx):
 
     lean_toolchains_repo(name = _HUB, entries = entries)
 
+    root_mod = [mod for mod in mctx.modules if mod.is_root]
+    root_module_name = root_mod[0].name if root_mod else ""
+
     root_labels = [Label("@@//:MODULE.bazel")]
     if Label("@@//:MODULE.bazel") != Label("//:MODULE.bazel"):
         root_labels.append(Label("//:MODULE.bazel"))
-    lean_imports_repo(name = "lean_imports", roots = root_labels)
+    lean_imports_repo(
+        name = "lean_imports",
+        roots = root_labels,
+        root_module_name = root_module_name,
+    )
 
     mathlib_version = "4.34.1"
     mathlib_sha256 = ""
