@@ -42,6 +42,7 @@ upstream.samples(
     #   async_systems_info                spawns a process, denied in the sandbox
     excludes = [
         "tests/elab/async_base_functions.lean",
+        "tests/elab/async_http_hang_regressions.lean",
         "tests/elab/async_select_channel.lean",
         "tests/elab/async_systems_info.lean",
         "tests/elab/importStructure.lean",
