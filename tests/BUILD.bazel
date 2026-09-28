@@ -1,8 +1,21 @@
-load("@rules_lean//lean:defs.bzl", "lean_negative_test")
+load("@rules_lean//lean:defs.bzl", "lean_negative_test", "lean_plugin", "lean_test")
 
 package(default_visibility = ["//visibility:public"])
 
 # Negative tests for forbid_sorry and lean_axiom_test gates (Milestone M4)
 lean_negative_test(
     name = "gates_negative_test",
+)
+
+lean_plugin(
+    name = "sample_plugin",
+    srcs = ["Plugin.lean"],
+)
+
+lean_test(
+    name = "plugin_test",
+    srcs = ["PluginConsumer.lean"],
+    entry = "PluginConsumer.lean",
+    plugins = [":sample_plugin"],
+    deps = [":sample_plugin"],
 )

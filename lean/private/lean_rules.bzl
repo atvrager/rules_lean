@@ -37,6 +37,13 @@ LeanLibraryInfo = provider(
     },
 )
 
+LeanPluginInfo = provider(
+    doc = "A compiled Lean compiler plugin shared library.",
+    fields = {
+        "plugin": "File: the shared library file (.so or .dylib).",
+    },
+)
+
 _LEAN_BIN = "bin/lean"
 _STDLIB_DIR = "lib/lean"
 _OLEAN_SUFFIX = ".olean"
@@ -117,13 +124,23 @@ def _stdlib_dir(tc, attribute):
 def _transitive(deps, field):
     return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps if hasattr(dep[LeanLibraryInfo], field)])
 
-def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env, forbid_sorry = False):
+def _compile_modules(
+        ctx,
+        tc,
+        srcs,
+        deps,
+        extra_flags,
+        extra_env,
+        forbid_sorry = False,
+        plugins = [],
+        generate_c = False):
     """Compile one action per source. Returns the oleans and their directory."""
     dep_oleans = _transitive(deps, "oleans")
 
     olean_dir = None
     runfiles_olean_dir = None
     oleans_by_mod = {}
+    cfiles_by_mod = {}
     src_by_mod = {}
     rel_by_mod = {}
     for src in srcs:
@@ -134,7 +151,12 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env, forbid_sorry =
         out_private = ctx.actions.declare_file("%s%s.private" % (rel, _OLEAN_SUFFIX))
         out_ir = ctx.actions.declare_file("%s.ir" % rel)
         out_ir_sig = ctx.actions.declare_file("%s.ir.sig" % rel)
-        oleans_by_mod[mod] = [out, out_server, out_private, out_ir, out_ir_sig]
+        files = [out, out_server, out_private, out_ir, out_ir_sig]
+        if generate_c:
+            out_c = ctx.actions.declare_file("%s.c/%s.c" % (ctx.label.name, rel))
+            files.append(out_c)
+            cfiles_by_mod[mod] = out_c
+        oleans_by_mod[mod] = files
         src_by_mod[mod] = src
         rel_by_mod[mod] = rel
 
@@ -189,6 +211,9 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env, forbid_sorry =
             fail("%s: import cycle detected involving module '%s'" % (ctx.label, mod))
         transitive_internal[mod] = visited.keys()
 
+    plugin_flags = ["--plugin=" + p.path for p in plugins]
+    c_snippet = '-c "$LEAN_C"' if generate_c else ""
+
     oleans = []
     for mod, src in src_by_mod.items():
         out_files = oleans_by_mod[mod]
@@ -210,10 +235,21 @@ if grep -q "declaration uses" "$tmp_log" && grep -q "sorry" "$tmp_log"; then
 fi
 """.format(target = ctx.label)
 
+        action_env = dict(
+            env,
+            LEAN_OUT = out.path,
+            LEAN_OUT_IR = out_ir.path,
+            LEAN_OUT_IR_SIG = out_ir_sig.path,
+            LEAN_MODREL = module_rel,
+            LEAN_SRC = src.path,
+        )
+        if generate_c:
+            action_env["LEAN_C"] = cfiles_by_mod[mod].path
+
         ctx.actions.run_shell(
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
 tmp_log="$(mktemp)"
-if ! "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@" 2>&1 | tee "$tmp_log"; then
+if ! "{lean}" -o "$LEAN_OUT" {c_snippet} -R "$root" "$LEAN_SRC" "$@" 2>&1 | tee "$tmp_log"; then
     rm -f "$tmp_log"
     exit 1
 fi
@@ -227,28 +263,22 @@ if [ ! -f "$LEAN_OUT_IR" ]; then
     mv "$empty_tmp.ir.sig" "$LEAN_OUT_IR_SIG"
     rm -rf "$(dirname "$empty_tmp")"
 fi
-""".format(lean = tc.lean.path, sorry_check = sorry_check),
-            arguments = extra_flags,
+""".format(lean = tc.lean.path, sorry_check = sorry_check, c_snippet = c_snippet),
+            arguments = plugin_flags + extra_flags,
             inputs = depset(
-                direct = [src] + internal_dep_oleans,
+                direct = [src] + internal_dep_oleans + plugins,
                 transitive = [tc.stdlib, dep_oleans],
             ),
             outputs = out_files,
             tools = [tc.lean],
-            env = dict(
-                env,
-                LEAN_OUT = out.path,
-                LEAN_OUT_IR = out_ir.path,
-                LEAN_OUT_IR_SIG = out_ir_sig.path,
-                LEAN_MODREL = module_rel,
-                LEAN_SRC = src.path,
-            ),
+            env = action_env,
             mnemonic = "LeanOlean",
             progress_message = "Lean %s" % module_rel,
         )
         oleans.extend(out_files)
 
     return struct(
+        cfiles = [cfiles_by_mod[m] for m in src_by_mod if m in cfiles_by_mod],
         module_imports = [
             (
                 _module_rel(ctx, src).replace("/", "."),
@@ -267,6 +297,7 @@ fi
 
 def _lean_library_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
+    plugins = [p[LeanPluginInfo].plugin for p in ctx.attr.plugins] if hasattr(ctx.attr, "plugins") else []
     result = _compile_modules(
         ctx,
         tc,
@@ -275,6 +306,7 @@ def _lean_library_impl(ctx):
         ctx.attr.extra_flags,
         ctx.attr.extra_env,
         forbid_sorry = getattr(ctx.attr, "forbid_sorry", False),
+        plugins = plugins,
     )
 
     return [
@@ -320,6 +352,10 @@ lean_library = rule(
         ),
         "internal_imports": attr.string_list_dict(
             doc = "Internal import graph edges between modules in this library.",
+        ),
+        "plugins": attr.label_list(
+            providers = [LeanPluginInfo],
+            doc = "Lean compiler plugins to load with --plugin.",
         ),
         "srcs": attr.label_list(
             allow_files = [".lean"],
@@ -404,7 +440,16 @@ lean_prebuilt_library = rule(
 
 def _lean_test_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
-    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags, ctx.attr.extra_env)
+    plugins = [p[LeanPluginInfo].plugin for p in ctx.attr.plugins] if hasattr(ctx.attr, "plugins") else []
+    result = _compile_modules(
+        ctx,
+        tc,
+        ctx.files.srcs,
+        ctx.attr.deps,
+        ctx.attr.extra_flags,
+        ctx.attr.extra_env,
+        plugins = plugins,
+    )
 
     entry = ctx.file.entry
     if entry not in ctx.files.srcs:
@@ -415,6 +460,8 @@ def _lean_test_impl(ctx):
         _transitive(ctx.attr.deps, "runfiles_olean_dirs").to_list() +
         [result.runfiles_olean_dir, _stdlib_dir(tc, "short_path")],
     )
+
+    plugin_flags = " ".join(["--plugin=\"%s\"" % p.short_path for p in plugins])
 
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(
@@ -437,15 +484,16 @@ LEAN_MODREL="{module_rel}"
             workspace = ctx.workspace_name,
         ) + _ROOT_SNIPPET + """
 export LEAN_PATH="{lean_path}"
-exec "{lean}" -R "$root" --run "$LEAN_SRC"
+exec "{lean}" {plugin_flags} -R "$root" --run "$LEAN_SRC"
 """.format(
             lean = tc.lean.short_path,
             lean_path = lean_path,
+            plugin_flags = plugin_flags,
         ),
     )
 
     runfiles = ctx.runfiles(
-        files = ctx.files.data + ctx.files.srcs + [tc.lean, entry] +
+        files = ctx.files.data + ctx.files.srcs + [tc.lean, entry] + plugins +
                 tc.stdlib.to_list() +
                 [file for info in dep_infos for file in info.oleans.to_list()],
     )
@@ -473,6 +521,10 @@ lean_test = rule(
         ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`.",
+        ),
+        "plugins": attr.label_list(
+            providers = [LeanPluginInfo],
+            doc = "Lean compiler plugins to load with --plugin.",
         ),
         "srcs": attr.label_list(
             allow_files = [".lean"],
@@ -872,6 +924,9 @@ def _lean_binary_impl(ctx):
         _transitive(ctx.attr.deps, "olean_dirs").to_list() + [_stdlib_dir(tc, "path")],
     )
 
+    plugins = [p[LeanPluginInfo].plugin for p in ctx.attr.plugins] if hasattr(ctx.attr, "plugins") else []
+    plugin_args = ["--plugin=" + p.path for p in plugins]
+
     sources = []
     for rel, src in compile_modules:
         olean = ctx.actions.declare_file("%s.oleans/%s.olean" % (ctx.label.name, rel))
@@ -883,9 +938,9 @@ def _lean_binary_impl(ctx):
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
 exec "{lean}" -o "$LEAN_OUT" -c "$LEAN_C" -R "$root" "$LEAN_SRC" "$@"
 """.format(lean = tc.lean.path),
-            arguments = ctx.attr.extra_flags,
+            arguments = plugin_args + ctx.attr.extra_flags,
             inputs = depset(
-                direct = [src],
+                direct = [src] + plugins,
                 transitive = [tc.stdlib, _transitive(ctx.attr.deps, "oleans")],
             ),
             outputs = [olean, cfile],
@@ -953,6 +1008,10 @@ lean_binary = rule(
             doc = "The module that holds `main`, as Lake's `root :=` names it. " +
                   "It must be one of `srcs` or of the modules of `deps`.",
         ),
+        "plugins": attr.label_list(
+            providers = [LeanPluginInfo],
+            doc = "Lean compiler plugins to load with --plugin.",
+        ),
         "srcs": attr.label_list(
             allow_files = [".lean"],
             doc = "Extra modules of the program. Keep them entry points: a " +
@@ -962,4 +1021,112 @@ lean_binary = rule(
     executable = True,
     toolchains = [TOOLCHAIN_TYPE],
     doc = "Links a native executable from Lean sources.",
+)
+
+def _lean_plugin_impl(ctx):
+    tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
+
+    plugins = [p[LeanPluginInfo].plugin for p in ctx.attr.plugins] if hasattr(ctx.attr, "plugins") else []
+    result = _compile_modules(
+        ctx,
+        tc,
+        ctx.files.srcs,
+        ctx.attr.deps,
+        ctx.attr.extra_flags,
+        ctx.attr.extra_env,
+        plugins = plugins,
+        generate_c = True,
+    )
+
+    modules = {}
+    for src in ctx.files.srcs:
+        rel = _module_rel(ctx, src)
+        modules[rel.replace("/", ".")] = (rel, src)
+
+    main_mod = ctx.attr.main
+    if not main_mod:
+        if len(modules) == 1:
+            main_mod = list(modules.keys())[0]
+        else:
+            main_mod = ctx.label.name
+
+    main_symbol = main_mod.replace(".", "_")
+
+    shared_lib = ctx.actions.declare_file("lib%s.so" % main_symbol)
+    args = ctx.actions.args()
+    args.add("-shared")
+    args.add("-DLEAN_EXPORTING")
+    args.add("-fPIC")
+    args.add("-o", shared_lib.path)
+    args.add_all(result.cfiles)
+    args.add_all(ctx.attr.extra_link_flags)
+
+    ctx.actions.run(
+        executable = tc.leanc,
+        arguments = [args],
+        inputs = depset(result.cfiles, transitive = [tc.link_inputs]),
+        outputs = [shared_lib],
+        tools = [tc.leanc],
+        mnemonic = "LeanPluginLink",
+        progress_message = "Lean plugin link %{label}",
+    )
+
+    return [
+        DefaultInfo(files = depset([shared_lib])),
+        LeanPluginInfo(plugin = shared_lib),
+        LeanLibraryInfo(
+            module_imports = depset(
+                direct = result.module_imports,
+                transitive = [_transitive(ctx.attr.deps, "module_imports")],
+            ),
+            module_sources = depset(
+                direct = [(rel, mod, src) for mod, (rel, src) in modules.items()],
+                transitive = [_transitive(ctx.attr.deps, "module_sources")],
+            ),
+            olean_dirs = depset(
+                direct = [result.olean_dir] if result.olean_dir != None else [],
+                transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
+            ),
+            oleans = result.oleans,
+            runfiles_olean_dirs = depset(
+                direct = [result.runfiles_olean_dir] if result.runfiles_olean_dir != None else [],
+                transitive = [_transitive(ctx.attr.deps, "runfiles_olean_dirs")],
+            ),
+        ),
+    ]
+
+lean_plugin = rule(
+    implementation = _lean_plugin_impl,
+    attrs = {
+        "deps": attr.label_list(
+            providers = [LeanLibraryInfo],
+            doc = "Lean libraries that the plugin imports.",
+        ),
+        "extra_env": attr.string_dict(
+            doc = "Environment variables for the `lean` action.",
+        ),
+        "extra_flags": attr.string_list(
+            doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",
+        ),
+        "extra_link_flags": attr.string_list(
+            doc = "Extra flags for `leanc`.",
+        ),
+        "internal_imports": attr.string_list_dict(
+            doc = "Internal import graph edges between modules in this plugin.",
+        ),
+        "main": attr.string(
+            doc = "The entry module of the plugin (determines initialize_<main> symbol). Defaults to the single src module or target name.",
+        ),
+        "plugins": attr.label_list(
+            providers = [LeanPluginInfo],
+            doc = "Other plugins loaded during compilation.",
+        ),
+        "srcs": attr.label_list(
+            allow_files = [".lean"],
+            mandatory = True,
+            doc = "Lean sources of the plugin.",
+        ),
+    },
+    toolchains = [TOOLCHAIN_TYPE],
+    doc = "Compiles Lean sources into a shared library plugin loaded with --plugin.",
 )

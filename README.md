@@ -7,8 +7,10 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. M0, M0b, M1, M2b, F0, and F1 work. `bazel test //...` passes 5 tests:
-`examples/rtl`, `examples/scheme`, `lisp`, `proofs:proofs_test`, and `proofs:mathlib_test`. CI builds the compiler
+Status: pre-0.1.0. M0, M0b, M1, M2, M2b, M3, M4, F0, F1, F2, F3, and F4 work.
+`bazel test //...` passes 13 tests: `examples/rtl`, `examples/scheme`, `lisp`,
+`proofs:proofs_test`, `proofs:mathlib_test`, four axiom tests, negative gate
+tests, compiler plugin tests, and buildifier linting. CI builds the compiler
 test piles of the Lean repository at the tag of the toolchain: 3125 of 3133
 `tests/elab` files (7 excluded, each with a reason), and 71 native programs
 from `tests/compile`. See
@@ -16,7 +18,9 @@ from `tests/compile`. See
 
     bazel test //...                                 # the ruleset and the demos
     cd e2e/hello && bazel test //...                 # the install path
+    cd e2e/lake_manifest && bazel test //...         # the lake manifest path
     cd e2e/upstream && bazel build @lean_samples//tests:pile_elab
+
 
 ## The problem
 
@@ -101,9 +105,16 @@ rule feature with a test in this repository.
 
 ## Install
 
+Use `git_override` until BCR publication:
+
 ```starlark
 # MODULE.bazel
-bazel_dep(name = "rules_lean", version = "0.1.0")
+bazel_dep(name = "rules_lean")
+git_override(
+    module_name = "rules_lean",
+    remote = "https://github.com/atvrager/rules_lean.git",
+    commit = "<commit-sha>",
+)
 
 lean = use_extension("@rules_lean//lean:extensions.bzl", "lean")
 
@@ -114,17 +125,30 @@ use_repo(lean, "lean_toolchains")
 register_toolchains("@lean_toolchains//:all")
 ```
 
-`use_repo` and `register_toolchains` complete the setup.
+Once registered on the BCR, `bazel_dep(name = "rules_lean", version = "0.1.0")` replaces `git_override`.
 
 ## Use
 
 ```starlark
 # BUILD.bazel
-load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test", "lean_axiom_test")
+load(
+    "@rules_lean//lean:defs.bzl",
+    "lean_axiom_test",
+    "lean_binary",
+    "lean_library",
+    "lean_plugin",
+    "lean_test",
+)
+
+lean_plugin(
+    name = "my_plugin",
+    srcs = ["Plugin.lean"],
+)
 
 lean_library(
     name = "arith",
     srcs = ["Arith.lean"],
+    plugins = [":my_plugin"],
 )
 
 lean_library(
@@ -148,16 +172,23 @@ lean_axiom_test(
     deps = [":proofs"],
     theorems = ["Proofs.card_empty"],
 )
+
+lean_binary(
+    name = "calc",
+    deps = [":arith"],
+    main = "Calc",
+)
 ```
 
 ## Rules
 
 | Rule | Produces | Notes |
 | --- | --- | --- |
-| `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`, `extra_env`; one action per source |
-| `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
-| `lean_prebuilt_library` | an importable olean tree | prebuilt oleans without compile actions |
+| `lean_library` | `.olean` per module | `srcs`, `deps`, `plugins`, `extra_flags`, `extra_env`; one action per source |
+| `lean_test` | a test | `srcs`, `entry`, `deps`, `plugins`; runs the entry with `lean --run` |
 | `lean_binary` | a native executable | `main` names the module with `main`, as Lake's `root :=`; `data` reaches runfiles |
+| `lean_plugin` | a shared library compiler plugin | compiles with `-shared -fPIC -DLEAN_EXPORTING`; consumed via `plugins` |
+| `lean_prebuilt_library` | an importable olean tree | prebuilt oleans without compile actions |
 | `lean_axiom_test` | a test | verifies theorem axioms against allowed_axioms with `#print axioms` |
 | `lean_toolchain` | a toolchain | write it in a BUILD file for a local compiler |
 
@@ -452,7 +483,7 @@ Ruleset milestones carry the machine milestones of
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
 | M3 | done: import-closure fetch, dual backend fetcher | fetch size follows the imports |
 | M4 | done: `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
-| M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, pull request | `bazel_dep(name = "rules_lean")` installs from the BCR |
+| M5 | BCR: deferred (`0.1.0` tag, `.bcr/{metadata,source,presubmit}`) | `bazel_dep(name = "rules_lean")` installs from the BCR |
 
 ## Layout
 
