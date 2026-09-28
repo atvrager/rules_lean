@@ -32,8 +32,8 @@ lean_test(
 # with no arguments it reads stdin.
 lean_binary(
     name = "scheme",
+    srcs = ["Scheme/Repl.lean"],
     data = ["Fact.scm"],
     main = "Scheme.Repl",
-    srcs = ["Scheme/Repl.lean"],
     deps = [":interp"],
 )

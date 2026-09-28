@@ -145,31 +145,31 @@ def _lake_package_repo_impl(rctx):
 
     lines = [
         'load("@rules_lean//lean:defs.bzl", "lean_library")',
-        '',
+        "",
         'package(default_visibility = ["//visibility:public"])',
-        '',
-        'lean_library(',
+        "",
+        "lean_library(",
         '    name = "%s",' % rctx.attr.pkg_name,
-        '    srcs = [',
+        "    srcs = [",
     ]
     for f in files:
         lines.append('        "%s",' % f)
-    lines.append('    ],')
+    lines.append("    ],")
 
     if internal_imports:
-        lines.append('    internal_imports = {')
+        lines.append("    internal_imports = {")
         for m, imps in sorted(internal_imports.items()):
             lines.append('        "%s": %s,' % (m, repr(imps)))
-        lines.append('    },')
+        lines.append("    },")
 
     if external_deps:
-        lines.append('    deps = [')
+        lines.append("    deps = [")
         for d in sorted(external_deps):
             lines.append('        "%s",' % d)
-        lines.append('    ],')
+        lines.append("    ],")
 
-    lines.append(')')
-    lines.append('')
+    lines.append(")")
+    lines.append("")
 
     build_content = "\n".join(lines)
     if src_dir_str:

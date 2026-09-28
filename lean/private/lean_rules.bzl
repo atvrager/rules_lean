@@ -165,7 +165,9 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env, forbid_sorry =
     direct_internal = {}
     for mod in oleans_by_mod:
         direct_internal[mod] = [
-            dep_mod for dep_mod in pkg_imports.get(mod, []) if dep_mod in oleans_by_mod
+            dep_mod
+            for dep_mod in pkg_imports.get(mod, [])
+            if dep_mod in oleans_by_mod
         ]
 
     # Compute transitive internal dependencies
@@ -496,7 +498,7 @@ def _lean_axiom_test_impl(ctx):
         seen = {}
         for info in dep_infos:
             if hasattr(info, "module_sources"):
-                for rel, mod, src in info.module_sources.to_list():
+                for _, mod, _ in info.module_sources.to_list():
                     if mod not in seen:
                         seen[mod] = True
                         modules.append(mod)

@@ -73,12 +73,18 @@ KNOWN_VERSIONS = {
     },
 }
 
-
 def parse_toolchain_file(content):
     """Return the version in a `lean-toolchain` file.
 
     Example: "leanprover/lean4:v4.34.1\\n" -> "4.34.1".
+
+    Args:
+      content: String content of the lean-toolchain file.
+
+    Returns:
+      The parsed version string.
     """
+
     spec = content.strip()
     if not spec:
         fail("lean-toolchain file is empty")
@@ -92,28 +98,23 @@ def parse_toolchain_file(content):
         fail("lean-toolchain file has an empty version")
     return spec
 
-
 def release_tag(version):
     """Return the GitHub release tag for a version: "4.34.1" -> "v4.34.1"."""
     if version and version[0].isdigit():
         return "v" + version
     return version
 
-
 def asset_name(version, platform):
     return "lean-%s-%s.tar.zst" % (version, PLATFORM_ASSETS[platform])
 
-
 def asset_prefix(version, platform):
     return "lean-%s-%s" % (version, PLATFORM_ASSETS[platform])
-
 
 def release_url(version, platform):
     return "https://github.com/leanprover/lean4/releases/download/%s/%s" % (
         release_tag(version),
         asset_name(version, platform),
     )
-
 
 def repo_suffix(version, platform):
     """Repository-name suffix for a (version, platform) pair."""

@@ -11,8 +11,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fast Starlark lint check.
+  lint:
+    name: Lint (buildifier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-lint
+          repository-cache: true
+      - name: Buildifier test
+        run: bazel test //:buildifier_test
+
   # The ruleset, the demos, and the proofs, on both supported Bazel versions.
   ruleset:
+
     name: Ruleset (Bazel ${{ matrix.bazel }})
     runs-on: ubuntu-latest
     strategy:

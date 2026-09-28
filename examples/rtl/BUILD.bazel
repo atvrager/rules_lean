@@ -43,11 +43,11 @@ lean_library(
 lean_library(
     name = "decode",
     srcs = ["Isa/Decode.lean"],
+    extra_flags = ["-DwarningAsError=true"],
     deps = [
         ":opcode_table",
         ":types",
     ],
-    extra_flags = ["-DwarningAsError=true"],
 )
 
 lean_library(

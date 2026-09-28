@@ -73,7 +73,7 @@ def _mathlib_repo_impl(rctx):
         fail("No sha256 known for Mathlib version %s. Specify sha256 attribute." % version)
 
     rctx.report_progress("Downloading Mathlib %s source" % tag)
-    result = rctx.download_and_extract(
+    rctx.download_and_extract(
         url = "https://github.com/leanprover-community/mathlib4/archive/refs/tags/%s.tar.gz" % tag,
         sha256 = sha256,
         strip_prefix = "mathlib4-%s" % raw_version,

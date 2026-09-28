@@ -13,7 +13,6 @@ LeanToolchainInfo = provider(
 
 TOOLCHAIN_TYPE = str(Label("//lean:toolchain_type"))
 
-
 def _lean_toolchain_impl(ctx):
     info = LeanToolchainInfo(
         version = ctx.attr.version,

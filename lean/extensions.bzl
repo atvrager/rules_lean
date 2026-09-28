@@ -8,7 +8,6 @@
 """
 
 load("//lean/private:repositories.bzl", "lean_imports_repo", "lean_toolchain_repo", "lean_toolchains_repo")
-load("//mathlib:repositories.bzl", "mathlib_repo")
 load(
     "//lean/private:versions.bzl",
     "KNOWN_VERSIONS",
@@ -16,6 +15,7 @@ load(
     "parse_toolchain_file",
     "repo_suffix",
 )
+load("//mathlib:repositories.bzl", "mathlib_repo")
 
 _HUB = "lean_toolchains"
 

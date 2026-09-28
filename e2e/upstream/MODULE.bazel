@@ -1,4 +1,7 @@
-module(name = "e2e_upstream", version = "0.0.0")
+module(
+    name = "e2e_upstream",
+    version = "0.0.0",
+)
 
 bazel_dep(name = "rules_lean", version = "0.0.0")
 
@@ -13,26 +16,16 @@ register_toolchains("@lean_toolchains//:all")
 #   tests/elab/run_test.sh, tests/elab_fail/run_test.sh, tests/compile/run_test.sh
 upstream = use_extension("//upstream:extensions.bzl", "upstream")
 upstream.samples(
-    tag = "v4.34.1",
-    sha256 = "9bb0bed7bae752a281e9923163d50da4193e36480cf5f639658e2e1502294056",
-    piles = {
-        "compile": "tests/compile",
-        "elab": "tests/elab",
+    excluded_piles = {
+        "doc/examples/compiler": "drives leanmake, not lean",
+        "tests/bench": "measures speed, does not check a result",
+        "tests/elab_fail": "negative tests: stage 3",
+        "tests/ir": "dead harness: imports init.Lean.Ir.lirc, which no longer exists",
+        "tests/lake": "tests Lake",
+        "tests/lean": "aspirational and scratch files, not a suite",
+        "tests/pkg": "tests Lake",
+        "tests/server": "tests the language server",
     },
-    flags = {
-        "compile": ["-Dcompiler.postponeCompile=false"],
-        "elab": [
-            "-DprintMessageEndPos=true",
-            "-Dlinter.all=false",
-            "-DElab.inServer=true",
-            "-Dcompiler.postponeCompile=false",
-        ],
-    },
-    link_flags = [
-        "-O3",
-        "-DNDEBUG",
-    ],
-    native_piles = ["compile"],
     # The upstream driver runs each test with the pile directory as the working
     # directory, with the environment of its `.init.sh`, and with a writable
     # file system. The rules give an action a sandbox and a fixed working
@@ -52,15 +45,25 @@ upstream.samples(
         "tests/elab/sync_mutex.lean",
         "tests/elab/task_iterators.lean",
     ],
-    excluded_piles = {
-        "doc/examples/compiler": "drives leanmake, not lean",
-        "tests/bench": "measures speed, does not check a result",
-        "tests/elab_fail": "negative tests: stage 3",
-        "tests/ir": "dead harness: imports init.Lean.Ir.lirc, which no longer exists",
-        "tests/lake": "tests Lake",
-        "tests/lean": "aspirational and scratch files, not a suite",
-        "tests/pkg": "tests Lake",
-        "tests/server": "tests the language server",
+    flags = {
+        "compile": ["-Dcompiler.postponeCompile=false"],
+        "elab": [
+            "-DprintMessageEndPos=true",
+            "-Dlinter.all=false",
+            "-DElab.inServer=true",
+            "-Dcompiler.postponeCompile=false",
+        ],
     },
+    link_flags = [
+        "-O3",
+        "-DNDEBUG",
+    ],
+    native_piles = ["compile"],
+    piles = {
+        "compile": "tests/compile",
+        "elab": "tests/elab",
+    },
+    sha256 = "9bb0bed7bae752a281e9923163d50da4193e36480cf5f639658e2e1502294056",
+    tag = "v4.34.1",
 )
 use_repo(upstream, "lean_samples")

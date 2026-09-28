@@ -36,6 +36,7 @@ lean_library(
         "VM/Machine.lean",
         "VM/Word.lean",
     ],
+    forbid_sorry = True,
     internal_imports = {
         "Lisp": [
             "Lisp.Compile",
@@ -54,8 +55,7 @@ lean_library(
         "Lisp.Parser": ["Lisp.Expr"],
         "Lisp.Tools.Gen": ["Lisp.Expr"],
     },
-    deps = ["@mathlib//:mathlib"],
-    forbid_sorry = True,
+    deps = ["@mathlib"],
 )
 
 lean_axiom_test(
@@ -65,7 +65,6 @@ lean_axiom_test(
         "Classical.choice",
         "Quot.sound",
     ],
-    deps = [":core"],
     theorems = [
         "Lisp.run_lit",
         "Lisp.eval_lit",
@@ -73,6 +72,7 @@ lean_axiom_test(
         "Lisp.compile_correct_ite",
         "Lisp.compile_correct_letE",
     ],
+    deps = [":core"],
 )
 
 # Runs the evaluator and the machine on the same expressions and compares.
@@ -90,7 +90,12 @@ lean_binary(
     srcs = ["Lisp/Main.lean"],
     data = ["prog.lisp"],
     internal_imports = {
-        "Lisp.Main": ["Lisp.Compile", "Lisp.Expr", "Lisp.Parser", "VM.Machine"],
+        "Lisp.Main": [
+            "Lisp.Compile",
+            "Lisp.Expr",
+            "Lisp.Parser",
+            "VM.Machine",
+        ],
     },
     main = "Lisp.Main",
     deps = [":core"],

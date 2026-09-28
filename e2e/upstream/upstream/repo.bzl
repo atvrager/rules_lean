@@ -149,13 +149,13 @@ def _samples_repo_impl(rctx):
                 env = _init_env(rctx, path)
                 body += _LIBRARY.format(
                     deps = "\n    deps = [\n" + "".join(
-                        ['        "%s",\n' % dep for dep in deps]
+                        ['        "%s",\n' % dep for dep in deps],
                     ) + "    ]," if deps else "",
                     env = "\n    extra_env = {\n" + "".join(
-                        ['        "%s": "%s",\n' % (name, value) for name, value in sorted(env.items())]
+                        ['        "%s": "%s",\n' % (name, value) for name, value in sorted(env.items())],
                     ) + "    }," if env else "",
                     flags = "\n    extra_flags = [\n" + "".join(
-                        ['        "%s",\n' % flag for flag in flags]
+                        ['        "%s",\n' % flag for flag in flags],
                     ) + "    ]," if flags else "",
                     name = name,
                     # Paths in a BUILD file are relative to its package.
@@ -166,7 +166,7 @@ def _samples_repo_impl(rctx):
                 if native:
                     body += _BINARY.format(
                         link_flags = "\n    extra_link_flags = [\n" + "".join(
-                            ['        "%s",\n' % flag for flag in rctx.attr.link_flags]
+                            ['        "%s",\n' % flag for flag in rctx.attr.link_flags],
                         ) + "    ]," if rctx.attr.link_flags else "",
                         module = module,
                         name = name,

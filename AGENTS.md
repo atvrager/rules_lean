@@ -64,6 +64,8 @@ declare them, so Lean reported missing executable code."
     bazel test //...                              # the rules, the demos, the proofs
     cd e2e/hello    && bazel test //...           # the install path
     cd e2e/upstream && bazel build @lean_samples//tests:pile_elab
+    bazel run //:buildifier                       # format all BUILD and .bzl files
+
 
 Run the first two after any change to `lean/`, and report the result. A change
 to a rule is not finished until both pass.

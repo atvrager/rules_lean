@@ -1,4 +1,7 @@
 # Package lake
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["repositories.bzl", "extensions.bzl"])
+exports_files([
+    "repositories.bzl",
+    "extensions.bzl",
+])
