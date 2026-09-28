@@ -8,6 +8,7 @@
 """
 
 load("//lean/private:repositories.bzl", "lean_imports_repo", "lean_toolchain_repo", "lean_toolchains_repo")
+load("//mathlib:repositories.bzl", "mathlib_repo")
 load(
     "//lean/private:versions.bzl",
     "KNOWN_VERSIONS",
@@ -17,6 +18,20 @@ load(
 )
 
 _HUB = "lean_toolchains"
+
+_MATHLIB_TAG = tag_class(
+    attrs = {
+        "modules": attr.string_list(
+            doc = "Optional list of modules to fetch. Empty means all modules.",
+        ),
+        "sha256": attr.string(
+            doc = "SHA256 of Mathlib release tarball.",
+        ),
+        "version": attr.string(
+            doc = "Mathlib version tag.",
+        ),
+    },
+)
 
 _TOOLCHAIN_TAG = tag_class(
     attrs = {
@@ -94,6 +109,7 @@ def _lean_impl(mctx):
                 requested[key] = sha256
 
     entries = []
+    toolchain_lakes = {}
     for (version, platform) in sorted(requested.keys()):
         repo = "lean_toolchain_" + repo_suffix(version, platform)
         lean_toolchain_repo(
@@ -103,6 +119,7 @@ def _lean_impl(mctx):
             version = version,
         )
         entries.append("%s %s %s" % (version, platform, repo))
+        toolchain_lakes[platform] = Label("@@+lean+" + repo + "//:bin/lake")
 
     lean_toolchains_repo(name = _HUB, entries = entries)
 
@@ -111,8 +128,33 @@ def _lean_impl(mctx):
         root_labels.append(Label("//:MODULE.bazel"))
     lean_imports_repo(name = "lean_imports", roots = root_labels)
 
+    mathlib_version = "4.34.1"
+    mathlib_sha256 = ""
+    mathlib_modules = []
+    has_mathlib_tag = False
+    for mod in mctx.modules:
+        for tag in mod.tags.mathlib:
+            has_mathlib_tag = True
+            if tag.version:
+                mathlib_version = tag.version
+            if tag.sha256:
+                mathlib_sha256 = tag.sha256
+            if tag.modules:
+                mathlib_modules = tag.modules
+
+    if not has_mathlib_tag and requested:
+        mathlib_version = sorted(requested.keys())[0][0]
+
+    mathlib_repo(
+        name = "mathlib",
+        modules = mathlib_modules,
+        sha256 = mathlib_sha256,
+        toolchain_lakes = toolchain_lakes,
+        version = mathlib_version,
+    )
+
     is_rules_lean_root = any([mod.is_root and mod.name == "rules_lean" for mod in mctx.modules])
-    root_deps = [_HUB, "lean_imports"] if is_rules_lean_root else [_HUB]
+    root_deps = [_HUB, "lean_imports", "mathlib"] if is_rules_lean_root else [_HUB]
 
     return mctx.extension_metadata(
         root_module_direct_deps = root_deps,
@@ -122,5 +164,8 @@ def _lean_impl(mctx):
 
 lean = module_extension(
     implementation = _lean_impl,
-    tag_classes = {"toolchain": _TOOLCHAIN_TAG},
+    tag_classes = {
+        "mathlib": _MATHLIB_TAG,
+        "toolchain": _TOOLCHAIN_TAG,
+    },
 )

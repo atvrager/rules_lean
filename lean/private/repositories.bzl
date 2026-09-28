@@ -70,6 +70,8 @@ lean_toolchain(
     stdlib = ":stdlib",
     visibility = ["//visibility:public"],
 )
+
+exports_files(["bin/lake", "bin/lean"], visibility = ["//visibility:public"])
 """
 
 def _lean_toolchain_repo_impl(rctx):

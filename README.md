@@ -7,8 +7,8 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. M0, M0b, M2b, and F0 work. `bazel test //...` passes 4 tests:
-`examples/rtl`, `examples/scheme`, `lisp`, and `proofs`. CI builds the compiler
+Status: pre-0.1.0. M0, M0b, M1, M2b, F0, and F1 work. `bazel test //...` passes 5 tests:
+`examples/rtl`, `examples/scheme`, `lisp`, `proofs:proofs_test`, and `proofs:mathlib_test`. CI builds the compiler
 test piles of the Lean repository at the tag of the toolchain: 3125 of 3133
 `tests/elab` files (7 excluded, each with a reason), and 71 native programs
 from `tests/compile`. See
@@ -156,7 +156,7 @@ lean_axiom_test(
 | --- | --- | --- |
 | `lean_library` | `.olean` per module | `srcs`, `deps`, `extra_flags`, `extra_env`; one action per source |
 | `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
-| `lean_prebuilt_library` | an importable olean tree | planned, M1 |
+| `lean_prebuilt_library` | an importable olean tree | prebuilt oleans without compile actions |
 | `lean_binary` | a native executable | `main` names the module with `main`, as Lake's `root :=`; `data` reaches runfiles |
 | `lean_axiom_test` | a test | planned, M4 |
 | `lean_toolchain` | a toolchain | write it in a BUILD file for a local compiler |
@@ -445,9 +445,9 @@ Ruleset milestones carry the machine milestones of
 
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
-| M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | done: `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
+| M0 | done: toolchain repository rule, `lean_library`, `lean_test`, hello e2e | `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
 | M0b | done: import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
-| M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
+| M1 | done: Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
 | M2 | `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
 | M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |

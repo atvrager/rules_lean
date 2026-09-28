@@ -31,6 +31,20 @@ lean_library(
     srcs = ["Proofs/Sums.lean"],
 )
 
+lean_library(
+    name = "mathlib_proofs",
+    srcs = [
+        "Proofs/Mathlib/Diagonal.lean",
+        "Proofs/Mathlib/Primes.lean",
+        "Proofs/Mathlib/Sqrt2.lean",
+        "Proofs/Mathlib/Sums.lean",
+    ],
+    deps = [
+        ":basic",
+        "@mathlib//:mathlib",
+    ],
+)
+
 lean_test(
     name = "proofs_test",
     size = "small",
@@ -42,5 +56,16 @@ lean_test(
         ":primes",
         ":sqrt2",
         ":sums",
+    ],
+)
+
+lean_test(
+    name = "mathlib_test",
+    size = "small",
+    srcs = ["Proofs/Test/MathlibChecks.lean"],
+    entry = "Proofs/Test/MathlibChecks.lean",
+    deps = [
+        ":mathlib_proofs",
+        "@mathlib//:mathlib",
     ],
 )

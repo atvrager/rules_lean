@@ -262,6 +262,74 @@ lean_library = rule(
     doc = "Compiles Lean sources to oleans, one action per source.",
 )
 
+def _lean_prebuilt_library_impl(ctx):
+    direct_olean_dirs = []
+    direct_runfiles_dirs = []
+
+    roots = list(ctx.attr.roots)
+    if ctx.attr.root and ctx.attr.root not in roots:
+        roots.append(ctx.attr.root)
+
+    if ctx.files.srcs:
+        first = ctx.files.srcs[0]
+        if roots:
+            for r in roots:
+                idx = first.path.find(r)
+                if idx != -1:
+                    d = first.path[:idx + len(r)]
+                    if d not in direct_olean_dirs:
+                        direct_olean_dirs.append(d)
+                sidx = first.short_path.find(r)
+                if sidx != -1:
+                    sd = first.short_path[:sidx + len(r)]
+                    if sd not in direct_runfiles_dirs:
+                        direct_runfiles_dirs.append(sd)
+        else:
+            direct_olean_dirs.append(first.dirname)
+            direct_runfiles_dirs.append(_parent_of(first.short_path, first.basename))
+
+    all_files = depset(direct = ctx.files.srcs, transitive = [_transitive(ctx.attr.deps, "oleans")])
+
+    return [
+        DefaultInfo(files = depset(ctx.files.srcs)),
+        LeanLibraryInfo(
+            olean_dirs = depset(
+                direct = direct_olean_dirs,
+                transitive = [_transitive(ctx.attr.deps, "olean_dirs")],
+            ),
+            module_sources = depset(
+                transitive = [_transitive(ctx.attr.deps, "module_sources")],
+            ),
+            oleans = all_files,
+            runfiles_olean_dirs = depset(
+                direct = direct_runfiles_dirs,
+                transitive = [_transitive(ctx.attr.deps, "runfiles_olean_dirs")],
+            ),
+        ),
+    ]
+
+lean_prebuilt_library = rule(
+    implementation = _lean_prebuilt_library_impl,
+    attrs = {
+        "deps": attr.label_list(
+            providers = [LeanLibraryInfo],
+            doc = "Lean libraries that these prebuilt modules import.",
+        ),
+        "root": attr.string(
+            default = "",
+            doc = "Directory containing the root modules, relative to package (e.g. 'lib/lean').",
+        ),
+        "roots": attr.string_list(
+            doc = "Multiple root directories containing modules, relative to package.",
+        ),
+        "srcs": attr.label_list(
+            allow_files = True,
+            doc = "Prebuilt files in the library.",
+        ),
+    },
+    doc = "Provides prebuilt oleans without running compilation actions.",
+)
+
 def _lean_test_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
     result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags, ctx.attr.extra_env)

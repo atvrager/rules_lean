@@ -9,11 +9,15 @@ lean_library(
     srcs = [
         "Lisp.lean",
         "Lisp/Compile.lean",
+        "Lisp/Correctness.lean",
+        "Lisp/Env.lean",
         "Lisp/Eval.lean",
         "Lisp/Expr.lean",
+        "Lisp/Subst.lean",
         "VM/Machine.lean",
         "VM/Word.lean",
     ],
+    deps = ["@mathlib//:mathlib"],
 )
 
 # Runs the evaluator and the machine on the same expressions and compares.

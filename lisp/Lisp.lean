@@ -1,6 +1,9 @@
 import Lisp.Expr
 import Lisp.Eval
 import Lisp.Compile
+import Lisp.Env
+import Lisp.Subst
+import Lisp.Correctness
 import VM.Word
 import VM.Machine
 
