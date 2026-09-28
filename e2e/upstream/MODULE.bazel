@@ -50,6 +50,7 @@ upstream.samples(
         "tests/elab/readDir.lean",
         "tests/elab/Reformat.lean",
         "tests/elab/sync_mutex.lean",
+        "tests/elab/task_iterators.lean",
     ],
     excluded_piles = {
         "doc/examples/compiler": "drives leanmake, not lean",
