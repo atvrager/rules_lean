@@ -22,6 +22,7 @@ directory, the output directory of the package, and that directory is the
 directory holds exactly those files.
 """
 
+load("@lean_imports//:imports.bzl", "IMPORTS")
 load("//lean:toolchain.bzl", "TOOLCHAIN_TYPE")
 
 LeanLibraryInfo = provider(
@@ -119,25 +120,73 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
     """Compile one action per source. Returns the oleans and their directory."""
     dep_oleans = _transitive(deps, "oleans")
 
+    olean_dir = None
+    runfiles_olean_dir = None
+    oleans_by_mod = {}
+    src_by_mod = {}
+    rel_by_mod = {}
+    for src in srcs:
+        rel = _module_rel(ctx, src)
+        mod = rel.replace("/", ".")
+        out = ctx.actions.declare_file("%s%s" % (rel, _OLEAN_SUFFIX))
+        oleans_by_mod[mod] = out
+        src_by_mod[mod] = src
+        rel_by_mod[mod] = rel
+
+        if olean_dir == None:
+            olean_dir = _parent_of(out.path, "%s%s" % (rel, _OLEAN_SUFFIX))
+            runfiles_olean_dir = _parent_of(out.short_path, "%s%s" % (rel, _OLEAN_SUFFIX))
+
     # Lean searches LEAN_PATH in order and replaces its built-in path, so the
-    # standard library must be an explicit entry.
-    lean_path = ":".join(_transitive(deps, "olean_dirs").to_list() + [_stdlib_dir(tc, "path")])
+    # package output directory and standard library must be explicit entries.
+    action_dirs = []
+    if olean_dir != None:
+        action_dirs.append(olean_dir)
+    action_dirs.extend(_transitive(deps, "olean_dirs").to_list())
+    action_dirs.append(_stdlib_dir(tc, "path"))
+    lean_path = ":".join(action_dirs)
 
     # The upstream test driver runs a test with the environment of its
     # `.init.sh` file, so the environment is an attribute.
     env = {"LEAN_PATH": lean_path}
     env.update(extra_env)
 
-    olean_dir = None
-    runfiles_olean_dir = None
-    oleans = []
-    for src in srcs:
-        module_rel = _module_rel(ctx, src)
-        out = ctx.actions.declare_file("%s%s" % (module_rel, _OLEAN_SUFFIX))
+    pkg = ctx.label.package
+    pkg_imports = IMPORTS.get(pkg, {})
 
-        if olean_dir == None:
-            olean_dir = _parent_of(out.path, "%s%s" % (module_rel, _OLEAN_SUFFIX))
-            runfiles_olean_dir = _parent_of(out.short_path, "%s%s" % (module_rel, _OLEAN_SUFFIX))
+    # Compute direct internal dependencies (modules in the same target)
+    direct_internal = {}
+    for mod in oleans_by_mod:
+        direct_internal[mod] = [
+            dep_mod for dep_mod in pkg_imports.get(mod, []) if dep_mod in oleans_by_mod
+        ]
+
+    # Compute transitive internal dependencies
+    transitive_internal = {}
+    for mod in oleans_by_mod:
+        visited = {}
+        queue = list(direct_internal[mod])
+        for _ in range(1000):
+            if not queue:
+                break
+            curr = queue.pop()
+            if curr in visited:
+                continue
+            visited[curr] = True
+            for next_dep in direct_internal.get(curr, []):
+                if next_dep not in visited:
+                    queue.append(next_dep)
+        if mod in visited:
+            fail("%s: import cycle detected involving module '%s'" % (ctx.label, mod))
+        transitive_internal[mod] = visited.keys()
+
+    oleans = []
+    for mod, src in src_by_mod.items():
+        out = oleans_by_mod[mod]
+        module_rel = rel_by_mod[mod]
+        internal_dep_oleans = [
+            oleans_by_mod[dep_mod] for dep_mod in transitive_internal[mod]
+        ]
 
         ctx.actions.run_shell(
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
@@ -145,7 +194,7 @@ exec "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
 """.format(lean = tc.lean.path),
             arguments = extra_flags,
             inputs = depset(
-                direct = [src],
+                direct = [src] + internal_dep_oleans,
                 transitive = [tc.stdlib, dep_oleans],
             ),
             outputs = [out],
@@ -310,13 +359,37 @@ def _lean_binary_impl(ctx):
         for rel, name, file in info.module_sources.to_list():
             modules[name] = (rel, file)
 
-    entry = modules.get(ctx.attr.main.replace("/", "."))
+    main_mod = ctx.attr.main.replace("/", ".")
+    entry = modules.get(main_mod)
     if entry == None:
         fail("%s: no module named '%s'. Known modules: %s" % (
             ctx.label,
             ctx.attr.main,
             ", ".join(sorted(modules.keys())),
         ))
+
+    # Compute the transitive import closure of main.
+    all_imports = {}
+    for pkg_mods in IMPORTS.values():
+        for mod_name, imps in pkg_mods.items():
+            all_imports[mod_name] = imps
+
+    needed = {}
+    queue = [main_mod]
+    for _ in range(10000):
+        if not queue:
+            break
+        curr = queue.pop()
+        if curr in needed:
+            continue
+        needed[curr] = True
+        for imp in all_imports.get(curr, []):
+            if imp in modules and imp not in needed:
+                queue.append(imp)
+
+    compile_modules = [modules[name] for name in sorted(needed.keys()) if name in modules]
+    if not compile_modules:
+        compile_modules = modules.values()
 
     # Lean searches LEAN_PATH in order and replaces its built-in path, so the
     # standard library must be an explicit entry.
@@ -325,7 +398,7 @@ def _lean_binary_impl(ctx):
     )
 
     sources = []
-    for rel, src in modules.values():
+    for rel, src in compile_modules:
         olean = ctx.actions.declare_file("%s.oleans/%s.olean" % (ctx.label.name, rel))
         cfile = ctx.actions.declare_file("%s.c/%s.c" % (ctx.label.name, rel))
 

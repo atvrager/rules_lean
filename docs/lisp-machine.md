@@ -55,9 +55,9 @@ What F1 and later add:
   VM/Cost.lean            instruction count, cost of a compiled expression
 ```
 
-F0 needed one target per module, because the rule does not read `import` lines
-yet. That is the M0b milestone, and this machine is its test: when M0b lands,
-the machine collapses to one target and keeps its cache behaviour.
+F0 needed one target per module, because the rule did not read `import` lines
+yet. At M0b, the ruleset scans the import graph and the machine collapses to
+one target (`//lisp:lisp`), keeping its cache behaviour.
 
 ### Where Mathlib does real work
 

@@ -155,3 +155,83 @@ def lean_toolchains_repo(name, entries):
       entries: strings of the form "<version> <platform> <repo>".
     """
     _lean_toolchains_repo(name = name, entries = entries)
+
+def _parse_imports(text):
+    """The module names the `import` lines of a file mention."""
+    modules = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if "--" in line:
+            line = line.split("--")[0].strip()
+        if not line.startswith("import"):
+            continue
+        words = [w for w in line.replace("\t", " ").split(" ") if w]
+        if words and words[0] == "import":
+            modules += words[1:]
+    return modules
+
+def _lean_imports_repo_impl(rctx):
+    imports_by_pkg = {}
+
+    for root_lbl in rctx.attr.roots:
+        root_dir = rctx.path(root_lbl).dirname
+        root_dir_str = str(root_dir)
+
+        root_has_build = (root_dir.get_child("BUILD.bazel").exists or
+                          root_dir.get_child("BUILD").exists)
+        queue = [(root_dir, "" if root_has_build else None)]
+
+        for _ in range(5000):
+            if not queue:
+                break
+            curr_dir, curr_pkg = queue.pop()
+
+            is_pkg = (curr_dir.get_child("BUILD.bazel").exists or
+                      curr_dir.get_child("BUILD").exists)
+            if is_pkg:
+                curr_str = str(curr_dir)
+                if curr_str == root_dir_str:
+                    curr_pkg = ""
+                else:
+                    curr_pkg = curr_str[len(root_dir_str) + 1:]
+                if curr_pkg not in imports_by_pkg:
+                    imports_by_pkg[curr_pkg] = {}
+
+            for entry in curr_dir.readdir():
+                base = entry.basename
+                if base.startswith(".") or base.startswith("bazel-") or base in ["build", "out", "external"]:
+                    continue
+                if entry.is_dir:
+                    if entry != root_dir and entry.get_child("MODULE.bazel").exists:
+                        continue
+                    queue.append((entry, curr_pkg))
+                elif base.endswith(".lean") and curr_pkg != None:
+                    entry_str = str(entry)
+                    if curr_pkg == "":
+                        rel_in_pkg = entry_str[len(root_dir_str) + 1:]
+                    else:
+                        pkg_dir_str = root_dir_str + "/" + curr_pkg
+                        rel_in_pkg = entry_str[len(pkg_dir_str) + 1:]
+
+                    if rel_in_pkg.endswith(".lean"):
+                        module_rel = rel_in_pkg[:-len(".lean")]
+                        module_name = module_rel.replace("/", ".")
+                        content = rctx.read(entry)
+                        imports_by_pkg[curr_pkg][module_name] = _parse_imports(content)
+
+    rctx.file("BUILD.bazel", "exports_files(['imports.bzl'])\n")
+    rctx.file("imports.bzl", "IMPORTS = " + repr(imports_by_pkg) + "\n")
+
+_lean_imports_repo = repository_rule(
+    implementation = _lean_imports_repo_impl,
+    attrs = {
+        "roots": attr.label_list(
+            mandatory = True,
+            doc = "Labels to MODULE.bazel files of modules to scan for Lean sources.",
+        ),
+    },
+    doc = "Scans Lean source files for import lines and writes imports.bzl.",
+)
+
+def lean_imports_repo(name, roots):
+    _lean_imports_repo(name = name, roots = roots)

@@ -8,6 +8,6 @@ bazel_dep(name = "platforms", version = "1.0.0")
 
 lean = use_extension("//lean:extensions.bzl", "lean")
 lean.toolchain(toolchain_file = "//:lean-toolchain")
-use_repo(lean, "lean_toolchains")
+use_repo(lean, "lean_toolchains", "lean_imports")
 
 register_toolchains("@lean_toolchains//:all")

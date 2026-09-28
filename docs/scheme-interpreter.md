@@ -63,6 +63,6 @@ The interpreter uses no Mathlib. Four consequences, from the build log:
 | Ruleset feature | Interpreter change |
 | --- | --- |
 | Mathlib from the cache (M1) | a proof that the evaluator's arithmetic agrees with a reference over `Int` |
-| import-graph scan (M0b) | the project collapses from eleven targets to one and keeps its cache behaviour |
+| import-graph scan (M0b) | done: the project collapses from eleven targets to one and keeps its cache behaviour |
 | `lean_axiom_test` (M4) | a gate on that proof |
 | persistent worker | the REPL's start-up cost, measured |

@@ -2,73 +2,20 @@ load("@rules_lean//lean:defs.bzl", "lean_binary", "lean_library", "lean_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# The interpreter, one target per module: lexer, reader, compiler to core
-# forms, environment, primitives, evaluator. `Scheme.lean` is the root module.
-lean_library(
-    name = "token",
-    srcs = ["Scheme/Token.lean"],
-)
-
-lean_library(
-    name = "sexp",
-    srcs = ["Scheme/Sexp.lean"],
-)
-
-lean_library(
-    name = "lexer",
-    srcs = ["Scheme/Lexer.lean"],
-    deps = [":token"],
-)
-
-lean_library(
-    name = "parser",
-    srcs = ["Scheme/Parser.lean"],
-    deps = [
-        ":sexp",
-        ":token",
-    ],
-)
-
-lean_library(
-    name = "ast",
-    srcs = ["Scheme/Ast.lean"],
-    deps = [":sexp"],
-)
-
-lean_library(
-    name = "env",
-    srcs = ["Scheme/Env.lean"],
-    deps = [":ast"],
-)
-
-lean_library(
-    name = "prim",
-    srcs = ["Scheme/Prim.lean"],
-    deps = [":env"],
-)
-
-lean_library(
-    name = "eval",
-    srcs = ["Scheme/Eval.lean"],
-    deps = [
-        ":ast",
-        ":env",
-        ":prim",
-    ],
-)
-
+# The interpreter as a single library: the ruleset scans the import graph to
+# order the modules and compile them with full parallelism. See M0b in the README.
 lean_library(
     name = "interp",
-    srcs = ["Scheme.lean"],
-    deps = [
-        ":ast",
-        ":env",
-        ":eval",
-        ":lexer",
-        ":parser",
-        ":prim",
-        ":sexp",
-        ":token",
+    srcs = [
+        "Scheme.lean",
+        "Scheme/Ast.lean",
+        "Scheme/Env.lean",
+        "Scheme/Eval.lean",
+        "Scheme/Lexer.lean",
+        "Scheme/Parser.lean",
+        "Scheme/Prim.lean",
+        "Scheme/Sexp.lean",
+        "Scheme/Token.lean",
     ],
 )
 
@@ -78,13 +25,7 @@ lean_test(
     size = "small",
     srcs = ["Scheme/Test/Eval.lean"],
     entry = "Scheme/Test/Eval.lean",
-    deps = [
-        ":ast",
-        ":env",
-        ":eval",
-        ":lexer",
-        ":parser",
-    ],
+    deps = [":interp"],
 )
 
 # The REPL, linked natively. `--eval` and `--file` take expressions and programs;

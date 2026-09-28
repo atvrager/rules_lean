@@ -7,7 +7,7 @@ Bazel rules for [Lean 4](https://lean-lang.org/).
 - Pin the Lean toolchain with sha256. Do not call `elan` in a build.
 - Fail a build on `sorry`. Check the axiom list of each theorem.
 
-Status: pre-0.1.0. M0, M2b, and F0 work. `bazel test //...` passes 4 tests:
+Status: pre-0.1.0. M0, M0b, M2b, and F0 work. `bazel test //...` passes 4 tests:
 `examples/rtl`, `examples/scheme`, `lisp`, and `proofs`. CI builds the compiler
 test piles of the Lean repository at the tag of the toolchain: 3125 of 3133
 `tests/elab` files (7 excluded, each with a reason), and 71 native programs
@@ -180,14 +180,16 @@ holds exactly the declared files.
 
 ### Import graph
 
-`deps` gives the dep edges. The rule does not read `import` lines yet, so a
-target that holds several modules cannot order them itself. Two ways to work
-today: one target per module, or one target per dependency layer.
+The `lean` module extension scans `.lean` sources for `import` lines and
+writes `@lean_imports//:imports.bzl`.
 
-Reading the import graph needs a file read at analysis time. A Bazel rule cannot
-read a source file (`ctx.read` does not exist on Bazel 9.2.0, test result), so
-the scan belongs in a module extension or a repository rule. It is on the
-roadmap, and the Lisp machine is its test.
+When a `lean_library` target holds multiple sources, the rule constructs
+internal dependency edges between the actions. Each module compiles in its own
+action with full parallelism. An edit to a leaf module recompiles only its
+importers.
+
+`lean_binary` traverses the import graph from `main` and generates C code only
+for modules in its transitive import closure.
 
 ## Architecture
 
@@ -381,11 +383,10 @@ ELF executable with no Lean library at run time. The link reads 544 MB of
 toolchain inputs (`lib/lean/*.a` 384 MB, `lib/*.a` and `lib/*.so*` 156 MB, the
 bundled clang and glibc).
 
-The closure of a `lean_binary` is the dependency set, not the import graph,
-because the rules do not read import lines yet. A binary over Mathlib would
-generate C for 6000 modules. M0b fixes this.
+The closure of a `lean_binary` follows the transitive import graph from
+`main`, generating C only for the modules needed.
 
-Measured on the Lisp machine (`//lisp`, seven targets, seven modules, one test):
+Measured on the Lisp machine (`//lisp`, one library target, one test target, six modules):
 
 | Event | Actions |
 | --- | --- |
@@ -445,7 +446,7 @@ Ruleset milestones carry the machine milestones of
 | Milestone | Deliverable | Acceptance |
 | --- | --- | --- |
 | M0 | toolchain repository rule, `lean_library`, `lean_test`, hello e2e | done: `bazel test //e2e/hello/...` passes; rebuild is a no-op; one leaf edit recompiles its importers only |
-| M0b | import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
+| M0b | done: import-graph scan in a module extension | a multi-module target gets exact per-module edges and full parallelism; the Lisp machine collapses to one target |
 | M1 | Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
 | M2 | `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |

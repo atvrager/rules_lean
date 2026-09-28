@@ -7,7 +7,7 @@
     register_toolchains("@lean_toolchains//:all")
 """
 
-load("//lean/private:repositories.bzl", "lean_toolchain_repo", "lean_toolchains_repo")
+load("//lean/private:repositories.bzl", "lean_imports_repo", "lean_toolchain_repo", "lean_toolchains_repo")
 load(
     "//lean/private:versions.bzl",
     "KNOWN_VERSIONS",
@@ -106,8 +106,16 @@ def _lean_impl(mctx):
 
     lean_toolchains_repo(name = _HUB, entries = entries)
 
+    root_labels = [Label("@@//:MODULE.bazel")]
+    if Label("@@//:MODULE.bazel") != Label("//:MODULE.bazel"):
+        root_labels.append(Label("//:MODULE.bazel"))
+    lean_imports_repo(name = "lean_imports", roots = root_labels)
+
+    is_rules_lean_root = any([mod.is_root and mod.name == "rules_lean" for mod in mctx.modules])
+    root_deps = [_HUB, "lean_imports"] if is_rules_lean_root else [_HUB]
+
     return mctx.extension_metadata(
-        root_module_direct_deps = [_HUB],
+        root_module_direct_deps = root_deps,
         root_module_direct_dev_deps = [],
         reproducible = True,
     )
