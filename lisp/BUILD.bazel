@@ -1,4 +1,4 @@
-load("@rules_lean//lean:defs.bzl", "lean_binary", "lean_library", "lean_test")
+load("@rules_lean//lean:defs.bzl", "lean_axiom_test", "lean_binary", "lean_library", "lean_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -55,6 +55,24 @@ lean_library(
         "Lisp.Tools.Gen": ["Lisp.Expr"],
     },
     deps = ["@mathlib//:mathlib"],
+    forbid_sorry = True,
+)
+
+lean_axiom_test(
+    name = "correctness_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Classical.choice",
+        "Quot.sound",
+    ],
+    deps = [":core"],
+    theorems = [
+        "Lisp.run_lit",
+        "Lisp.eval_lit",
+        "Lisp.compile_correct_lit",
+        "Lisp.compile_correct_ite",
+        "Lisp.compile_correct_letE",
+    ],
 )
 
 # Runs the evaluator and the machine on the same expressions and compares.

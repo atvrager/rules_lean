@@ -158,7 +158,7 @@ lean_axiom_test(
 | `lean_test` | a test | `srcs`, `entry`, `deps`; runs the entry with `lean --run` |
 | `lean_prebuilt_library` | an importable olean tree | prebuilt oleans without compile actions |
 | `lean_binary` | a native executable | `main` names the module with `main`, as Lake's `root :=`; `data` reaches runfiles |
-| `lean_axiom_test` | a test | planned, M4 |
+| `lean_axiom_test` | a test | verifies theorem axioms against allowed_axioms with `#print axioms` |
 | `lean_toolchain` | a toolchain | write it in a BUILD file for a local compiler |
 
 The module name of a source is its path relative to the Bazel package
@@ -451,7 +451,7 @@ Ruleset milestones carry the machine milestones of
 | M2 | done: `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
 | M3 | done: import-closure fetch, dual backend fetcher | fetch size follows the imports |
-| M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
+| M4 | done: `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
 | M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, pull request | `bazel_dep(name = "rules_lean")` installs from the BCR |
 
 ## Layout

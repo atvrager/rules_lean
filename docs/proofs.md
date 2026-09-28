@@ -65,4 +65,4 @@ the definitions they are stated over.
 3. The axiom column is updated with `#print axioms`. A theorem whose axioms grew
    by accident is a finding, not an inconvenience.
 4. The tier grows with the ruleset: M1 adds Mathlib versions, M4 adds the axiom
-   gate, and the checks stay green through both.
+   gate (done: `diagonal_axiom_test`, `sums_axiom_test`, `sqrt2_axiom_test`, `primes_axiom_test`), and the checks stay green through both.

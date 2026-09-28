@@ -117,7 +117,7 @@ def _stdlib_dir(tc, attribute):
 def _transitive(deps, field):
     return depset(transitive = [getattr(dep[LeanLibraryInfo], field) for dep in deps if hasattr(dep[LeanLibraryInfo], field)])
 
-def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
+def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env, forbid_sorry = False):
     """Compile one action per source. Returns the oleans and their directory."""
     dep_oleans = _transitive(deps, "oleans")
 
@@ -198,9 +198,25 @@ def _compile_modules(ctx, tc, srcs, deps, extra_flags, extra_env):
         for dep_mod in transitive_internal[mod]:
             internal_dep_oleans.extend(oleans_by_mod[dep_mod])
 
+        sorry_check = ""
+        if forbid_sorry:
+            sorry_check = """
+if grep -q "declaration uses" "$tmp_log" && grep -q "sorry" "$tmp_log"; then
+    echo "error: $LEAN_SRC uses sorry, but forbid_sorry is enabled for {target}" >&2
+    rm -f "$tmp_log"
+    exit 1
+fi
+""".format(target = ctx.label)
+
         ctx.actions.run_shell(
             command = "set -euo pipefail\n\n" + _ROOT_SNIPPET + """
-"{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@"
+tmp_log="$(mktemp)"
+if ! "{lean}" -o "$LEAN_OUT" -R "$root" "$LEAN_SRC" "$@" 2>&1 | tee "$tmp_log"; then
+    rm -f "$tmp_log"
+    exit 1
+fi
+{sorry_check}
+rm -f "$tmp_log"
 touch "$LEAN_OUT.server" "$LEAN_OUT.private"
 if [ ! -f "$LEAN_OUT_IR" ]; then
     empty_tmp="$(mktemp -d)/e"
@@ -209,7 +225,7 @@ if [ ! -f "$LEAN_OUT_IR" ]; then
     mv "$empty_tmp.ir.sig" "$LEAN_OUT_IR_SIG"
     rm -rf "$(dirname "$empty_tmp")"
 fi
-""".format(lean = tc.lean.path),
+""".format(lean = tc.lean.path, sorry_check = sorry_check),
             arguments = extra_flags,
             inputs = depset(
                 direct = [src] + internal_dep_oleans,
@@ -249,7 +265,15 @@ fi
 
 def _lean_library_impl(ctx):
     tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
-    result = _compile_modules(ctx, tc, ctx.files.srcs, ctx.attr.deps, ctx.attr.extra_flags, ctx.attr.extra_env)
+    result = _compile_modules(
+        ctx,
+        tc,
+        ctx.files.srcs,
+        ctx.attr.deps,
+        ctx.attr.extra_flags,
+        ctx.attr.extra_env,
+        forbid_sorry = getattr(ctx.attr, "forbid_sorry", False),
+    )
 
     return [
         DefaultInfo(files = result.oleans),
@@ -287,6 +311,10 @@ lean_library = rule(
         ),
         "extra_flags": attr.string_list(
             doc = "Extra flags for `lean`, for example [\"-DwarningAsError=true\"].",
+        ),
+        "forbid_sorry": attr.bool(
+            default = False,
+            doc = "Fail compilation if any declaration in the target uses `sorry`.",
         ),
         "internal_imports": attr.string_list_dict(
             doc = "Internal import graph edges between modules in this library.",
@@ -453,6 +481,333 @@ lean_test = rule(
     test = True,
     toolchains = [TOOLCHAIN_TYPE],
     doc = "Compiles Lean sources and runs one of them with the interpreter.",
+)
+
+def _lean_axiom_test_impl(ctx):
+    tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
+    dep_infos = [dep[LeanLibraryInfo] for dep in ctx.attr.deps]
+    lean_path = ":".join(
+        _transitive(ctx.attr.deps, "runfiles_olean_dirs").to_list() +
+        [_stdlib_dir(tc, "short_path")],
+    )
+
+    modules = list(ctx.attr.modules)
+    if not modules:
+        seen = {}
+        for info in dep_infos:
+            if hasattr(info, "module_sources"):
+                for rel, mod, src in info.module_sources.to_list():
+                    if mod not in seen:
+                        seen[mod] = True
+                        modules.append(mod)
+
+    theorems = ctx.attr.theorems
+    if not theorems:
+        fail("%s: lean_axiom_test requires non-empty 'theorems'" % ctx.label)
+
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+
+    import_lines = "\n".join(["import %s" % m for m in modules])
+    query_lines = "\n".join(["#print axioms %s" % t for t in theorems])
+
+    allowed_space = " ".join(ctx.attr.allowed_axioms)
+    forbidden_space = " ".join(ctx.attr.forbid_axioms)
+    theorems_space = " ".join(theorems)
+
+    ctx.actions.write(
+        output = script,
+        is_executable = True,
+        content = """#!/usr/bin/env bash
+# Verify that theorems depend only on allowed axioms.
+set -euo pipefail
+
+RUNFILES="${{RUNFILES_DIR:-$0.runfiles}}"
+cd "$RUNFILES/{workspace}"
+
+export LEAN_PATH="{lean_path}"
+
+input_lean="$(mktemp --suffix=.lean)"
+cat << 'LEAN_SCRIPT_EOF' > "$input_lean"
+{import_lines}
+{query_lines}
+LEAN_SCRIPT_EOF
+
+lean_out="$("{lean}" "$input_lean" 2>&1)" || {{
+    echo "Error running Lean axiom check:" >&2
+    echo "$lean_out" >&2
+    rm -f "$input_lean"
+    exit 1
+}}
+rm -f "$input_lean"
+
+echo "=== Lean axiom verification output ==="
+echo "$lean_out"
+echo "======================================"
+
+allowed_list="{allowed_space}"
+forbidden_list="{forbidden_space}"
+failed=0
+
+for thm in {theorems_space}; do
+    line="$(echo "$lean_out" | grep -F "'$thm'" || true)"
+    if [ -z "$line" ]; then
+        echo "ERROR: No axiom report found for theorem '$thm'" >&2
+        failed=1
+        continue
+    fi
+
+    if echo "$line" | grep -q "does not depend on any axioms"; then
+        echo "PASS: '$thm' does not depend on any axioms"
+        continue
+    fi
+
+    raw_axioms="$(echo "$line" | tr '[]' '\n\n' | sed -n '2p')"
+    axioms=$(echo "$raw_axioms" | tr ',' ' ')
+
+    for ax in $axioms; do
+        ax="$(echo "$ax" | xargs)"
+        [ -z "$ax" ] && continue
+
+        for forbid in $forbidden_list; do
+            if [ "$ax" = "$forbid" ]; then
+                echo "FAIL: Theorem '$thm' depends on forbidden axiom '$ax'" >&2
+                failed=1
+            fi
+        done
+
+        if [ -n "$allowed_list" ]; then
+            is_allowed=0
+            for allow in $allowed_list; do
+                if [ "$ax" = "$allow" ]; then
+                    is_allowed=1
+                    break
+                fi
+            done
+            if [ "$is_allowed" -eq 0 ]; then
+                echo "FAIL: Theorem '$thm' depends on unallowed axiom '$ax' (allowed: [ $allowed_list ])" >&2
+                failed=1
+            fi
+        fi
+    done
+done
+
+if [ "$failed" -ne 0 ]; then
+    echo "Axiom check failed." >&2
+    exit 1
+fi
+
+echo "All theorem axiom gates passed."
+""".format(
+            workspace = ctx.workspace_name,
+            lean_path = lean_path,
+            import_lines = import_lines,
+            query_lines = query_lines,
+            lean = tc.lean.short_path,
+            allowed_space = allowed_space,
+            forbidden_space = forbidden_space,
+            theorems_space = theorems_space,
+        ),
+    )
+
+    runfiles = ctx.runfiles(
+        files = [tc.lean] + tc.stdlib.to_list() +
+                [file for info in dep_infos for file in info.oleans.to_list()],
+    )
+
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+lean_axiom_test = rule(
+    implementation = _lean_axiom_test_impl,
+    test = True,
+    attrs = {
+        "allowed_axioms": attr.string_list(
+            default = ["propext", "Classical.choice", "Quot.sound"],
+            doc = "Axioms permitted for the theorems.",
+        ),
+        "deps": attr.label_list(
+            mandatory = True,
+            providers = [LeanLibraryInfo],
+            doc = "Lean libraries containing the theorems.",
+        ),
+        "forbid_axioms": attr.string_list(
+            default = ["sorryAx"],
+            doc = "Axioms explicitly forbidden.",
+        ),
+        "modules": attr.string_list(
+            doc = "Modules to import. Defaults to all modules in deps.",
+        ),
+        "theorems": attr.string_list(
+            mandatory = True,
+            doc = "Theorems to check with #print axioms.",
+        ),
+    },
+    toolchains = [TOOLCHAIN_TYPE],
+    doc = "Verifies that theorems depend only on allowed axioms.",
+)
+
+def _lean_negative_test_impl(ctx):
+    tc = ctx.toolchains[TOOLCHAIN_TYPE].lean_toolchain
+    lean_path = _stdlib_dir(tc, "short_path")
+
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+
+    ctx.actions.write(
+        output = script,
+        is_executable = True,
+        content = """#!/usr/bin/env bash
+# Negative tests for forbid_sorry and lean_axiom_test gates.
+set -euo pipefail
+
+RUNFILES="${{RUNFILES_DIR:-$0.runfiles}}"
+cd "$RUNFILES/{workspace}"
+
+export LEAN_PATH="{lean_path}"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+echo "=== Running negative test 1: planted sorry with forbid_sorry ==="
+cat << 'EOF' > "$tmp_dir/Sorry.lean"
+theorem planted_sorry : 1 = 1 := sorry
+EOF
+
+tmp_log="$tmp_dir/lean.log"
+set +e
+"{lean}" -R "$tmp_dir" -o "$tmp_dir/Sorry.olean" "$tmp_dir/Sorry.lean" > "$tmp_log" 2>&1
+lean_status=$?
+set -e
+
+# Emulate forbid_sorry check
+if grep -q "declaration uses" "$tmp_log" && grep -q "sorry" "$tmp_log"; then
+    echo "PASS: forbid_sorry detected planted sorry in Sorry.lean"
+else
+    echo "FAIL: forbid_sorry failed to detect planted sorry" >&2
+    cat "$tmp_log" >&2
+    exit 1
+fi
+
+echo "=== Running negative test 2: clean proof with forbid_sorry ==="
+cat << 'EOF' > "$tmp_dir/Clean.lean"
+theorem clean_proof : 1 = 1 := rfl
+EOF
+
+set +e
+"{lean}" -R "$tmp_dir" -o "$tmp_dir/Clean.olean" "$tmp_dir/Clean.lean" > "$tmp_log" 2>&1
+clean_status=$?
+set -e
+
+if [ $clean_status -ne 0 ]; then
+    echo "FAIL: clean proof failed to compile" >&2
+    cat "$tmp_log" >&2
+    exit 1
+fi
+
+if grep -q "declaration uses" "$tmp_log" && grep -q "sorry" "$tmp_log"; then
+    echo "FAIL: clean proof incorrectly flagged with sorry" >&2
+    exit 1
+else
+    echo "PASS: clean proof passed forbid_sorry check"
+fi
+
+echo "=== Running negative test 3: planted sorry with axiom gate ==="
+cat << 'EOF' > "$tmp_dir/check_sorry.lean"
+theorem sorry_thm : 1 = 1 := sorry
+#print axioms sorry_thm
+EOF
+
+set +e
+ax_out="$("{lean}" "$tmp_dir/check_sorry.lean" 2>&1)"
+set -e
+
+echo "$ax_out"
+raw_axioms="$(echo "$ax_out" | grep "'sorry_thm'" | tr '[]' '\\n\\n' | sed -n '2p')"
+if echo "$raw_axioms" | grep -q "sorryAx"; then
+    echo "PASS: planted sorry reported sorryAx axiom"
+else
+    echo "FAIL: sorryAx not reported in axioms: $ax_out" >&2
+    exit 1
+fi
+
+# Verify rejection against allowed_axioms = [propext, Classical.choice, Quot.sound]
+allowed="propext Classical.choice Quot.sound"
+ax_detected=0
+for ax in $(echo "$raw_axioms" | tr ',' ' '); do
+    ax="$(echo "$ax" | xargs)"
+    [ -z "$ax" ] && continue
+    if [ "$ax" = "sorryAx" ]; then
+        ax_detected=1
+    fi
+done
+if [ $ax_detected -eq 1 ]; then
+    echo "PASS: axiom gate correctly identifies sorryAx as violating allowed axioms"
+else
+    echo "FAIL: sorryAx was not flagged" >&2
+    exit 1
+fi
+
+echo "=== Running negative test 4: planted native_decide with axiom gate ==="
+cat << 'EOF' > "$tmp_dir/check_native.lean"
+theorem native_thm : 1 = 1 := by native_decide
+#print axioms native_thm
+EOF
+
+set +e
+nd_out="$("{lean}" "$tmp_dir/check_native.lean" 2>&1)"
+set -e
+
+echo "$nd_out"
+raw_nd_axioms="$(echo "$nd_out" | grep "'native_thm'" | tr '[]' '\\n\\n' | sed -n '2p')"
+if echo "$raw_nd_axioms" | grep -q "native_decide"; then
+    echo "PASS: planted native_decide reported synthetic axiom: $raw_nd_axioms"
+else
+    echo "FAIL: native_decide axiom not found in output: $nd_out" >&2
+    exit 1
+fi
+
+# Verify rejection against allowed_axioms = [propext, Classical.choice, Quot.sound]
+nd_rejected=0
+for ax in $(echo "$raw_nd_axioms" | tr ',' ' '); do
+    ax="$(echo "$ax" | xargs)"
+    [ -z "$ax" ] && continue
+    is_ok=0
+    for allow in $allowed; do
+        if [ "$ax" = "$allow" ]; then
+            is_ok=1
+            break
+        fi
+    done
+    if [ $is_ok -eq 0 ]; then
+        nd_rejected=1
+    fi
+done
+
+if [ $nd_rejected -eq 1 ]; then
+    echo "PASS: axiom gate correctly rejected native_decide axiom"
+else
+    echo "FAIL: native_decide was not rejected" >&2
+    exit 1
+fi
+
+echo "All gate negative tests passed successfully."
+""".format(
+            workspace = ctx.workspace_name,
+            lean_path = lean_path,
+            lean = tc.lean.short_path,
+        ),
+    )
+
+    runfiles = ctx.runfiles(
+        files = [tc.lean] + tc.stdlib.to_list(),
+    )
+
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+lean_negative_test = rule(
+    implementation = _lean_negative_test_impl,
+    test = True,
+    attrs = {},
+    toolchains = [TOOLCHAIN_TYPE],
+    doc = "Verifies that forbid_sorry and lean_axiom_test gates fail on planted sorry and native_decide.",
 )
 
 def _lean_binary_impl(ctx):

@@ -1,4 +1,4 @@
-load("@rules_lean//lean:defs.bzl", "lean_library", "lean_test")
+load("@rules_lean//lean:defs.bzl", "lean_axiom_test", "lean_library", "lean_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,28 +7,33 @@ package(default_visibility = ["//visibility:public"])
 lean_library(
     name = "basic",
     srcs = ["Proofs/Basic.lean"],
+    forbid_sorry = True,
 )
 
 lean_library(
     name = "diagonal",
     srcs = ["Proofs/Diagonal.lean"],
+    forbid_sorry = True,
 )
 
 lean_library(
     name = "primes",
     srcs = ["Proofs/Primes.lean"],
     deps = [":basic"],
+    forbid_sorry = True,
 )
 
 lean_library(
     name = "sqrt2",
     srcs = ["Proofs/Sqrt2.lean"],
     deps = [":basic"],
+    forbid_sorry = True,
 )
 
 lean_library(
     name = "sums",
     srcs = ["Proofs/Sums.lean"],
+    forbid_sorry = True,
 )
 
 lean_library(
@@ -42,6 +47,53 @@ lean_library(
     deps = [
         ":basic",
         "@mathlib//:mathlib",
+    ],
+    forbid_sorry = True,
+)
+
+lean_axiom_test(
+    name = "diagonal_axiom_test",
+    allowed_axioms = ["propext"],
+    deps = [":diagonal"],
+    theorems = ["Proofs.no_surjection_nat_bool"],
+)
+
+lean_axiom_test(
+    name = "sums_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Quot.sound",
+    ],
+    deps = [":sums"],
+    theorems = [
+        "Proofs.sumOdds_eq",
+        "Proofs.odds_sum",
+    ],
+)
+
+lean_axiom_test(
+    name = "sqrt2_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Quot.sound",
+    ],
+    deps = [":sqrt2"],
+    theorems = ["Proofs.no_sqrt2"],
+)
+
+lean_axiom_test(
+    name = "primes_axiom_test",
+    allowed_axioms = [
+        "propext",
+        "Classical.choice",
+        "Quot.sound",
+    ],
+    deps = [":primes"],
+    theorems = [
+        "Proofs.exists_prime_dvd",
+        "Proofs.dvd_fact",
+        "Proofs.two_dvd_mul_self",
+        "Proofs.exists_prime_gt",
     ],
 )
 
@@ -69,3 +121,4 @@ lean_test(
         "@mathlib//:mathlib",
     ],
 )
+

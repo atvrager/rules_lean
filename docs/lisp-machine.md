@@ -99,7 +99,7 @@ Each milestone pairs a ruleset feature with a piece of the machine.
 | F1 | Mathlib oleans from the cache | `Env` on `Finsupp`, `Subst`, `Correctness` for `let` and `if` | done: the proof builds with zero Mathlib source builds |
 | F2 | generated sources, `lean_binary` | `Tools/Gen` emits a program; `lisp` links natively | done: `bazel run //lisp:lisp -- prog.lisp` prints the machine result; `data` files reach runfiles |
 | F3 | import-closure fetch | the proof imports few Mathlib modules | done: measured fetch size follows the imports, not all of Mathlib |
-| F4 | `forbid_sorry`, `lean_axiom_test` | gates on `Correctness` | a planted `sorry` fails the build; the axiom list is printed |
+| F4 | `forbid_sorry`, `lean_axiom_test` | gates on `Correctness` | done: a planted `sorry` fails the build; the axiom list is printed |
 | F5 | parallelism and cache at scale | a generated family of 800 programs | `--jobs` scaling and remote-cache hit ratio are reported |
 
 ## Rules for growth
