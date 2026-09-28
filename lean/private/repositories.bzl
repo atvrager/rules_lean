@@ -158,14 +158,81 @@ def lean_toolchains_repo(name, entries):
     """
     _lean_toolchains_repo(name = name, entries = entries)
 
+_DECL_KEYWORDS = [
+    "def",
+    "theorem",
+    "lemma",
+    "inductive",
+    "structure",
+    "class",
+    "instance",
+    "namespace",
+    "section",
+    "variable",
+    "universe",
+    "axiom",
+    "opaque",
+    "macro",
+    "syntax",
+    "elab",
+    "notation",
+    "infix",
+    "prefix",
+    "postfix",
+    "initialize",
+    "builtin_initialize",
+]
+
 def _parse_imports(text):
     """The module names the `import` lines of a file mention."""
     modules = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if "--" in line:
-            line = line.split("--")[0].strip()
-        words = [w for w in line.replace("\t", " ").split(" ") if w]
+    lines = text.split("\n")
+    depth = 0
+    in_string = False
+
+    for line in lines:
+        out = []
+        i = 0
+        n = len(line)
+        for idx in range(n):
+            if idx < i:
+                continue
+            ch = line[idx]
+            ch2 = line[idx:idx + 2]
+
+            if in_string:
+                if ch == "\\":
+                    i = idx + 2
+                elif ch == '"':
+                    in_string = False
+                    i = idx + 1
+            elif depth > 0:
+                if ch2 == "/-":
+                    depth += 1
+                    i = idx + 2
+                elif ch2 == "-/":
+                    depth -= 1
+                    i = idx + 2
+            elif ch2 == "/-":
+                depth += 1
+                i = idx + 2
+            elif ch2 == "--":
+                break
+            elif ch == '"':
+                in_string = True
+                i = idx + 1
+            else:
+                out.append(ch)
+                i = idx + 1
+
+        cleaned = "".join(out).strip()
+        if not cleaned:
+            continue
+        words = [w for w in cleaned.replace("\t", " ").split(" ") if w]
+        if not words:
+            continue
+        if words[0] in _DECL_KEYWORDS:
+            break
         if "import" in words:
             idx = words.index("import")
             if all([w in ["public", "meta", "scoped", "open", "all"] for w in words[:idx]]):
