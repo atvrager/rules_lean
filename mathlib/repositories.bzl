@@ -79,25 +79,63 @@ def _mathlib_repo_impl(rctx):
         strip_prefix = "mathlib4-%s" % raw_version,
     )
 
-    cache_cmd = [str(lake_path), "exe", "cache", "get"]
-    if rctx.attr.modules:
-        cache_cmd.extend(rctx.attr.modules)
-
-    rctx.report_progress("Fetching Mathlib oleans with lake cache get")
-    res = rctx.execute(
-        cache_cmd,
-        environment = {
-            "PATH": str(bin_dir) + ":/bin:/usr/bin:/usr/local/bin",
-            "HOME": str(rctx.os.environ.get("HOME", "/tmp")),
-        },
-        timeout = 900,
-    )
-    if res.return_code != 0:
-        fail("lake exe cache get failed (exit code %d):\n%s\n%s" % (res.return_code, res.stdout, res.stderr))
-
     python = rctx.which("python3") or rctx.which("python")
     if not python:
         fail("python3 or python required in PATH to link Mathlib oleans")
+
+    if rctx.attr.fetcher == "direct":
+        cache_dir = rctx.path(".cache")
+        cache_cmd = [str(lake_path), "exe", "cache", "get-"]
+        if rctx.attr.modules:
+            cache_cmd.extend(rctx.attr.modules)
+        rctx.report_progress("Downloading Mathlib .ltar archives")
+        res = rctx.execute(
+            cache_cmd,
+            environment = {
+                "HOME": str(rctx.os.environ.get("HOME", "/tmp")),
+                "MATHLIB_CACHE_DIR": str(cache_dir),
+                "PATH": str(bin_dir) + ":/bin:/usr/bin:/usr/local/bin",
+            },
+            timeout = 900,
+        )
+        if res.return_code != 0:
+            fail("Direct cache download failed (exit code %d):\n%s\n%s" % (res.return_code, res.stdout, res.stderr))
+
+        rctx.report_progress("Extracting Mathlib archives with leantar")
+        leantar_path = str(bin_dir) + "/leantar"
+        res = rctx.execute([
+            str(python),
+            "-c",
+            """
+import os, subprocess, sys
+td = sys.argv[1]
+leantar = sys.argv[2]
+ltars = [os.path.join(td, f) for f in os.listdir(td) if f.endswith('.ltar')]
+for ltar in ltars:
+    subprocess.check_call([leantar, '-x', '-f', ltar])
+""",
+            str(cache_dir),
+            leantar_path,
+        ])
+        if res.return_code != 0:
+            fail("leantar extraction failed:\n%s\n%s" % (res.stdout, res.stderr))
+    else:
+        cache_cmd = [str(lake_path), "exe", "cache", "get"]
+        if rctx.attr.modules:
+            cache_cmd.extend(rctx.attr.modules)
+
+        rctx.report_progress("Fetching Mathlib oleans with lake cache get")
+        res = rctx.execute(
+            cache_cmd,
+            environment = {
+                "HOME": str(rctx.os.environ.get("HOME", "/tmp")),
+                "PATH": str(bin_dir) + ":/bin:/usr/bin:/usr/local/bin",
+            },
+            timeout = 900,
+        )
+        if res.return_code != 0:
+            fail("lake exe cache get failed (exit code %d):\n%s\n%s" % (res.return_code, res.stdout, res.stderr))
+
     res = rctx.execute([str(python), "-c", _LINK_SCRIPT, str(rctx.path(""))])
     if res.return_code != 0:
         fail("Failed to link Mathlib oleans:\n%s\n%s" % (res.stdout, res.stderr))
@@ -107,6 +145,11 @@ def _mathlib_repo_impl(rctx):
 _mathlib_repo = repository_rule(
     implementation = _mathlib_repo_impl,
     attrs = {
+        "fetcher": attr.string(
+            default = "lake",
+            doc = "Backend to fetch Mathlib oleans: 'lake' or 'direct'.",
+            values = ["lake", "direct"],
+        ),
         "modules": attr.string_list(
             doc = "Optional subset of modules to fetch. If empty, fetches all cache files.",
         ),
@@ -125,9 +168,10 @@ _mathlib_repo = repository_rule(
     doc = "Downloads Mathlib source, runs lake cache get, and provides prebuilt oleans.",
 )
 
-def mathlib_repo(name, toolchain_lakes, version = "4.34.1", sha256 = "", modules = []):
+def mathlib_repo(name, toolchain_lakes, version = "4.34.1", sha256 = "", modules = [], fetcher = "lake"):
     _mathlib_repo(
         name = name,
+        fetcher = fetcher,
         modules = modules,
         sha256 = sha256,
         toolchain_lakes = toolchain_lakes,

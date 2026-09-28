@@ -450,7 +450,7 @@ Ruleset milestones carry the machine milestones of
 | M1 | done: Mathlib oleans from the cache, `lean_prebuilt_library` | the Lisp proof of F1 compiles with zero Mathlib source builds; offline after the first fetch; the `proofs/` tier gains Mathlib versions that replace the hand-rolled lemmas |
 | M2 | done: `lake-manifest.json` to per-dep repositories | a project with two git deps builds with per-module actions, and no `lake` at build time |
 | M2b | done: `lean_binary` | `bazel run //examples/rtl:rtl_emit -- examples/rtl/Spec.txt` prints `block inputs=3`; the executable is 4.3 MB and links no Lean shared library |
-| M3 | import-closure fetch, own fetcher, no `lake` binary | fetch size follows the imports |
+| M3 | done: import-closure fetch, dual backend fetcher | fetch size follows the imports |
 | M4 | `forbid_sorry`, `lean_axiom_test`, negative tests | each gate fails on a planted `sorry` or `native_decide` |
 | M5 | BCR: `0.1.0` tag, `.bcr/{metadata,source,presubmit}`, pull request | `bazel_dep(name = "rules_lean")` installs from the BCR |
 

@@ -21,6 +21,11 @@ _HUB = "lean_toolchains"
 
 _MATHLIB_TAG = tag_class(
     attrs = {
+        "fetcher": attr.string(
+            default = "lake",
+            doc = "Backend to fetch Mathlib oleans: 'lake' or 'direct'.",
+            values = ["lake", "direct"],
+        ),
         "modules": attr.string_list(
             doc = "Optional list of modules to fetch. Empty means all modules.",
         ),
@@ -131,6 +136,7 @@ def _lean_impl(mctx):
     mathlib_version = "4.34.1"
     mathlib_sha256 = ""
     mathlib_modules = []
+    mathlib_fetcher = "lake"
     has_mathlib_tag = False
     for mod in mctx.modules:
         for tag in mod.tags.mathlib:
@@ -141,12 +147,15 @@ def _lean_impl(mctx):
                 mathlib_sha256 = tag.sha256
             if tag.modules:
                 mathlib_modules = tag.modules
+            if tag.fetcher:
+                mathlib_fetcher = tag.fetcher
 
     if not has_mathlib_tag and requested:
         mathlib_version = sorted(requested.keys())[0][0]
 
     mathlib_repo(
         name = "mathlib",
+        fetcher = mathlib_fetcher,
         modules = mathlib_modules,
         sha256 = mathlib_sha256,
         toolchain_lakes = toolchain_lakes,

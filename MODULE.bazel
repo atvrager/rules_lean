@@ -8,6 +8,14 @@ bazel_dep(name = "platforms", version = "1.0.0")
 
 lean = use_extension("//lean:extensions.bzl", "lean")
 lean.toolchain(toolchain_file = "//:lean-toolchain")
+lean.mathlib(
+    modules = [
+        "Mathlib.Data.Finsupp.Basic",
+        "Mathlib.Data.Nat.Basic",
+        "Mathlib.Data.Nat.Prime.Infinite",
+        "Mathlib.Logic.Function.Basic",
+    ],
+)
 use_repo(lean, "lean_toolchains", "lean_imports", "mathlib")
 
 register_toolchains("@lean_toolchains//:all")
